@@ -261,6 +261,26 @@ respond — every comment is written to the immutable audit trail. (`stack/db/09
 - **Does a comment/attachment need its own retention/export** in the audit package beyond the control
   actions? → `…`
 
+## O. Procurement evidence chain (three-way match)
+
+Tie spend back to its authorization: Requisition → Purchase Order → Work Order / Goods Receipt →
+Vendor Invoice, with a three-way match (ordered ↔ received ↔ invoiced) that surfaces unmatched
+documents — the evidence trail behind an AP / expense reconciliation. (`stack/db/10-procurement.sql`;
+`/api/procurement`, `/api/procurement/{id}`, `.../accept-match`.) *Scope note:* this is the evidence
+chain; a GR/IR **clearing-account reconciliation** (open items netting to the GL clearing balance) is a
+separate, larger feature — say if you need it.
+
+- **Where do the procurement documents come from?** `[ ]` ERP procurement module (SAP/Oracle/Dynamics —
+  PO/GR/invoice tables) `[ ]` a dedicated P2P tool (Coupa/Ariba/…) `[ ]` spreadsheets / manual `[ ]` other → `…`
+- **Match tolerance** (the $ / % a chain may differ across ordered/received/invoiced and still count as
+  matched): → `…`
+- **Which exception types matter to you** (default: over-invoiced, maverick spend, GRNI / received-not-
+  invoiced, invoiced-not-received, quantity/amount mismatch): → `…`
+- **Who accepts a three-way match** (an approver who is **not** the requisition's requestor — segregation
+  of duties): → `…`
+- **Do you also need the GR/IR clearing-account reconciliation** (open items tie to the GL clearing
+  balance)? `[ ]` not now `[ ]` yes → `…`
+
 ---
 
 ## Minimum to start
