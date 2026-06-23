@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRecon — Procurement</title>
+<link rel="stylesheet" href="assets/app.css?v=1.11.0">
+<style>
+  .viewsel{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:10px;padding:7px 11px;background:#fff}
+  .viewsel label{font-size:12px;color:var(--muted);font-weight:600}
+  .viewsel select{border:none;outline:none;font:inherit;font-size:13.5px;font-weight:600;background:transparent;cursor:pointer}
+  .chain{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:14px;box-shadow:var(--shadow)}
+  .chain.exception{border-color:#F3D9A6;background:#FFFCF5}
+  .chain .ch{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .chain .ch .ti{font-size:15px;font-weight:700}
+  .chain .ch .meta{font-size:12.5px;color:var(--muted)}
+  .pchip{font-size:11.5px;font-weight:700;letter-spacing:.3px;border-radius:20px;padding:4px 12px;margin-left:auto}
+  .pchip.ok{background:var(--greenbg);color:var(--green)} .pchip.rd{background:#E6F1FB;color:#185FA5}
+  .pchip.var{background:#FBF0DA;color:#8A5A00} .pchip.op{background:var(--slatebg);color:var(--slate)}
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+  .node{flex:1;min-width:150px;border:1px solid var(--line);border-radius:12px;padding:11px 13px;background:#FAFBFE;position:relative}
+  .node.off{opacity:.5;border-style:dashed;background:#fff}
+  .node .nk{font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);font-weight:700}
+  .node .nid{font-size:13.5px;font-weight:700;margin-top:2px}
+  .node .nm{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .node .na{font-size:14px;font-weight:700;margin-top:6px;font-variant-numeric:tabular-nums}
+  .arrow{display:flex;align-items:center;justify-content:center;width:26px;color:#C5CBE0;flex:none}
+  .arrow svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2.5}
+  .reasons{margin-top:13px;display:flex;flex-direction:column;gap:6px}
+  .rsn{font-size:12.5px;font-weight:600;border-radius:9px;padding:7px 11px;display:flex;align-items:center;gap:8px}
+  .rsn.exc{background:#FBEAEA;color:#A23B34} .rsn.opn{background:var(--slatebg);color:var(--slate)}
+  .rsn .d{width:7px;height:7px;border-radius:50%;flex:none;background:currentColor}
+  .chactions{margin-top:13px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:13px}
+  .deltas{display:flex;gap:16px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+  .deltas b{color:var(--text);font-variant-numeric:tabular-nums}
+  .accepted{font-size:13px;font-weight:600;color:var(--green)}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side"></aside>
+  <div class="main">
+    <header class="top">
+      <div><h1>Procurement</h1><div class="crumb">Requisition → PO → Work order / Goods receipt → Invoice — three-way match &amp; the authorization trail behind each spend</div></div>
+      <div class="sp"></div>
+      <div class="viewsel"><label>Viewing as</label><select id="viewas"></select></div>
+    </header>
+    <div class="body">
+      <div class="kpis" id="kpis"></div>
+      <div id="chains"></div>
+    </div>
+  </div>
+</div>
+<script src="assets/app.js?v=1.11.0"></script>
+<script>
+  renderSidebar('procurement');
+
+  const vs = document.getElementById('viewas');
+  vs.innerHTML = RECON.team.map(t=>`<option value="${t.name}" ${t.name===RECON.viewer?'selected':''}>${t.name} — ${roleLabel(t.role)}</option>`).join('');
+  vs.onchange = () => { setViewer(vs.value); render(); };
+
+  function render(){
+    const k = procKpis();
+    const kd=[
+      {lab:'Chains', num:k.chains, bg:'var(--slatebg)', stroke:'#5A6385', icon:'<path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 12l9 4 9-4"/>', foot:'PR → PO → receipt → invoice'},
+      {lab:'Matched', num:k.matched+k.ready, bg:'var(--greenbg)', stroke:'#11A150', icon:'<path d="M20 6 9 17l-5-5"/>', foot:`${k.matched} accepted · ${k.ready} ready`},
+      {lab:'Exceptions', num:k.exceptions, bg:'#FBF0DA', stroke:'#C9790B', icon:'<path d="M12 9v4m0 4h.01M10.3 4.3 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z"/>', foot:`${money(k.exposure)} exposure`},
+      {lab:'Open', num:k.open, bg:'#E6F1FB', stroke:'#185FA5', icon:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', foot:'awaiting PO / receipt / invoice'},
+    ];
+    document.getElementById('kpis').innerHTML = kd.map(d=>`
+      <div class="kpi" style="cursor:default"><div class="lab">${d.lab}</div>
+        <div class="row"><div class="num">${d.num}</div><div class="chip" style="background:${d.bg}"><svg viewBox="0 0 24 24" stroke="${d.stroke}" fill="none">${d.icon}</svg></div></div>
+        <div class="foot">${d.foot}</div></div>`).join('');
+
+    const arrow = `<div class="arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>`;
+    const node = (kind, o, amt) => o
+      ? `<div class="node"><div class="nk">${kind}</div><div class="nid">${o.id}</div><div class="nm">${o.label||''}</div><div class="na">${amt!=null?money(amt):''}</div></div>`
+      : `<div class="node off"><div class="nk">${kind}</div><div class="nid">— none —</div><div class="nm"></div><div class="na"></div></div>`;
+
+    document.getElementById('chains').innerHTML = RECON.procurement.map((e,i)=>{
+      const c = procChain(e);
+      const st = PROC_STATUS[c.status];
+      const prN = node('Requisition', e.pr && {id:e.pr.id, label:e.pr.title}, e.pr?e.pr.amount:null);
+      const poN = node('Purchase order', e.po && {id:e.po.id, label:e.po.vendor}, e.po?e.po.amount:null);
+      const woN = node('Receipt / WO', (e.receipts&&e.receipts.length)?{id:e.receipts.map(r=>r.id).join(', '), label:'received'}:null, c.received||null);
+      const inN = node('Invoice', (e.invoices&&e.invoices.length)?{id:e.invoices.map(v=>v.id).join(', '), label:e.invoices[0].ref}:null, c.invoiced||null);
+      const reasons = [...c.exceptions.map(r=>`<div class="rsn exc"><span class="d"></span>${r}</div>`),
+                       ...c.opens.map(r=>`<div class="rsn opn"><span class="d"></span>${r}</div>`)].join('');
+      const title = e.pr ? e.pr.title : (e.po ? e.po.vendor+' — '+e.po.gl_name : '—');
+      const dept = e.pr ? e.pr.dept : '—';
+      const isRequestor = e.pr && e.pr.requestor===RECON.viewer;
+      const canAccept = c.status==='ready_to_match' && can(viewerRole(),'approve') && !isRequestor;
+      let action='';
+      if(e.accepted) action = `<span class="accepted">✓ Three-way match accepted by ${e._by||RECON.viewer}.</span>`;
+      else if(canAccept) action = `<button class="btn" onclick="accept(${i})"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Accept three-way match</button><span class="meta" style="font-size:12.5px;color:var(--muted)">PO ≈ received ≈ invoiced — confirm to clear it.</span>`;
+      else if(c.status==='ready_to_match' && isRequestor) action = `<span class="meta" style="font-size:12.5px;color:var(--muted)">Ready to match — segregation of duties: you raised this requisition, so another approver accepts it.</span>`;
+      else if(c.status==='ready_to_match') action = `<span class="meta" style="font-size:12.5px;color:var(--muted)">Ready to match — an approver (Senior+) accepts it.</span>`;
+      else if(c.status==='exception') action = `<span class="meta" style="font-size:12.5px;color:#A23B34;font-weight:600">Resolve the exception before this chain can be matched.</span>`;
+      return `<div class="chain ${c.status==='exception'?'exception':''}">
+        <div class="ch"><div><div class="ti">${title}</div><div class="meta">${procKey(e)} · ${dept}${e.po?' · '+e.po.gl_code+' '+e.po.gl_name:''}</div></div>
+          <span class="pchip ${st.cls}">${st.label}</span></div>
+        <div class="flow">${prN}${arrow}${poN}${arrow}${woN}${arrow}${inN}</div>
+        ${reasons?`<div class="reasons">${reasons}</div>`:''}
+        <div class="chactions">
+          <div class="deltas"><span>ordered <b>${money(c.ordered)}</b></span><span>received <b>${money(c.received)}</b></span><span>invoiced <b>${money(c.invoiced)}</b></span></div>
+          <div style="margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap">${action}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  function accept(i){
+    if(!can(viewerRole(),'approve')) return;
+    RECON.procurement[i].accepted = true;
+    RECON.procurement[i]._by = RECON.viewer;
+    render();
+  }
+  window.accept = accept;
+  render();
+</script>
+</body>
+</html>

@@ -317,6 +317,7 @@ function renderSidebar(active){
     ${item('docs','documents.html','Documents','<svg viewBox="0 0 24 24"><path d="M14 3v5h5M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-5Z"/></svg>')}
     ${item('accounts','workspace.html','Accounts','<svg viewBox="0 0 24 24"><path d="M3 3v18h18M8 16l3.5-4 3 2.5L20 8"/></svg>')}
     ${item('projects','projects.html','Projects','<svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 12l9 4 9-4M3 17l9 4 9-4"/></svg>')}
+    ${item('procurement','procurement.html','Procurement','<svg viewBox="0 0 24 24"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2 4h12"/><circle cx="9" cy="20" r="1"/><circle cx="17" cy="20" r="1"/></svg>',procKpis().exceptions)}
     ${item('periods','periods.html','Year-end close','<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>')}
     ${item('audit','audit.html','Audit package','<svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg>')}
     <div class="navsep"></div>
@@ -528,3 +529,66 @@ function frPostComment(hostId, etype, eid){
   renderThread(hostId, etype, eid);
 }
 if(typeof window!=='undefined'){ window.renderThread=renderThread; window.frPostComment=frPostComment; window.frToggleAttach=frToggleAttach; window.frRespond=frRespond; window.frCancelRespond=frCancelRespond; }
+
+/* ───────── Procurement evidence chain (#26): Requisition → PO → Work Order/Goods Receipt → Invoice ─────────
+   Ties spend back to its authorization + a three-way-match check (PO ↔ received ↔ invoiced) that surfaces
+   unmatched documents. Client-side for the showcase; the stack persists + audits server-side
+   (stack/db/10-procurement.sql; /api/procurement, /api/procurement/{id}, .../accept-match). */
+RECON.procurement = [
+  { pr:{id:"PR-1001", title:"Substation 7 — replacement breakers", requestor:"Joe B.", dept:"Operations", amount:148000},
+    po:{id:"PO-2001", vendor:"Burns & McDonnell", amount:148000, gl_code:"353", gl_name:"Station equipment"},
+    receipts:[{id:"WO-3001", desc:"Breakers delivered & accepted", amount:148000, date:"2026-05-18"}],
+    invoices:[{id:"INV-4001", ref:"BMcD-55821", amount:148000, date:"2026-05-24", doc:"DMS-55821"}], accepted:false },
+  { pr:{id:"PR-1002", title:"Fleet — 3 service trucks", requestor:"Glen M.", dept:"Operations", amount:92000},
+    po:{id:"PO-2002", vendor:"Regional Fleet Co.", amount:92000, gl_code:"392", gl_name:"Transportation equipment"},
+    receipts:[{id:"WO-3002", desc:"3 trucks received", amount:92000, date:"2026-05-19"}],
+    invoices:[{id:"INV-4002", ref:"RFC-7741", amount:96500, date:"2026-05-26", doc:"DMS-77410"}], accepted:false },
+  { pr:{id:"PR-1003", title:"Distribution poles — restock", requestor:"Dana P.", dept:"Operations", amount:64000},
+    po:{id:"PO-2003", vendor:"Stelpro Supply", amount:64000, gl_code:"364", gl_name:"Poles, towers & fixtures"},
+    receipts:[{id:"WO-3003", desc:"Poles received", amount:64000, date:"2026-05-21"}],
+    invoices:[], accepted:false },
+  { pr:null,
+    po:{id:"PO-2004", vendor:"Quick Office Supplies", amount:3200, gl_code:"921", gl_name:"Office supplies & expenses"},
+    receipts:[],
+    invoices:[{id:"INV-4005", ref:"QOS-3320", amount:3200, date:"2026-05-23", doc:"DMS-33200"}], accepted:false },
+  { pr:{id:"PR-1005", title:"GIS software renewal", requestor:"Sam R.", dept:"IT", amount:38000},
+    po:null, receipts:[], invoices:[], accepted:false },
+];
+const PROC_TOL = 50;
+const PROC_STATUS = {
+  matched:        {label:"Matched",          cls:"ok"},
+  ready_to_match: {label:"Ready to match",   cls:"rd"},
+  exception:      {label:"Exception",        cls:"var"},
+  in_progress:    {label:"Open",             cls:"op"},
+};
+function procChain(e){
+  const received = (e.receipts||[]).reduce((s,r)=>s+r.amount,0);
+  const invoiced = (e.invoices||[]).reduce((s,i)=>s+i.amount,0);
+  const ordered  = e.po ? e.po.amount : (e.pr ? e.pr.amount : 0);
+  const exc=[], opn=[];
+  if(e.po && !e.pr) exc.push("maverick spend — PO has no requisition");
+  if(e.po && invoiced > e.po.amount + PROC_TOL) exc.push("over-invoiced by "+money(invoiced - e.po.amount));
+  if(invoiced > PROC_TOL && received <= PROC_TOL) exc.push("invoiced but nothing received");
+  if(received > PROC_TOL && invoiced > PROC_TOL && Math.abs(received - invoiced) > PROC_TOL)
+    exc.push("receipt vs invoice mismatch ("+money(received - invoiced)+")");
+  if(received > PROC_TOL && invoiced <= PROC_TOL) opn.push("received, not yet invoiced (GRNI)");
+  if(e.po && received <= PROC_TOL && invoiced <= PROC_TOL) opn.push("awaiting fulfillment");
+  if(!e.po && e.pr) opn.push("awaiting PO");
+  let status;
+  if(exc.length) status="exception";
+  else if(e.accepted) status="matched";
+  else if(e.po && received > PROC_TOL && invoiced > PROC_TOL && !opn.length) status="ready_to_match";
+  else status="in_progress";
+  return {ordered, received, invoiced, status, exceptions:exc, opens:opn,
+          deltas:{po_received:ordered-received, po_invoiced:ordered-invoiced, received_invoiced:received-invoiced}};
+}
+function procKpis(){
+  const cs=RECON.procurement.map(procChain);
+  return {chains:cs.length,
+          matched:cs.filter(c=>c.status==="matched").length,
+          ready:cs.filter(c=>c.status==="ready_to_match").length,
+          exceptions:cs.filter(c=>c.status==="exception").length,
+          open:cs.filter(c=>c.status==="in_progress").length,
+          exposure:cs.filter(c=>c.status==="exception").reduce((s,c)=>s+c.ordered,0)};
+}
+function procKey(e){ return e.po ? e.po.id : (e.pr ? e.pr.id : "—"); }

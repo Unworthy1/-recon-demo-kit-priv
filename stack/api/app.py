@@ -23,7 +23,7 @@ import etl
 import projects.funding_map as fmap
 from ferc.classifier import FERCClassifier
 
-app = FastAPI(title="OpenRecon API", version="1.10.0")
+app = FastAPI(title="OpenRecon API", version="1.11.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DB_URL = os.environ["DATABASE_URL"]
@@ -793,3 +793,134 @@ def inbox(team: str | None = None, user: str | None = None):
         q += " ORDER BY o.requested_at"
         rows = c.execute(q, params).fetchall()
     return {"teams": teams_filter or "all", "open_requests": rows}
+
+
+# ═══════════════════════════ procurement evidence chain (#26) ═══════════════════════════
+# Requisition → PO → Work Order/Goods Receipt → Vendor Invoice. A three-way-match check (PO ↔ received
+# ↔ invoiced) surfaces unmatched documents and ties spend back to its authorization. Evidence-chain
+# scope: the GR/IR clearing-account *reconciliation* is deferred (see docs).
+PROC_TOL = 50.0  # $ tolerance for three-way amount agreement
+
+
+def _chain_status(po, received, invoiced, accepted):
+    """Classify a PO's chain. Returns (status, exceptions[], opens[]).
+    exceptions = genuine problems; opens = expected open items (not errors)."""
+    exc, opn = [], []
+    ordered = float(po["amount"])
+    if not po.get("requisition_id"):
+        exc.append("maverick spend — PO has no requisition")
+    if invoiced > ordered + PROC_TOL:
+        exc.append(f"over-invoiced by {round(invoiced - ordered, 2)}")
+    if invoiced > PROC_TOL and received <= PROC_TOL:
+        exc.append("invoiced but nothing received")
+    if received > PROC_TOL and invoiced > PROC_TOL and abs(received - invoiced) > PROC_TOL:
+        exc.append(f"receipt vs invoice mismatch ({round(received - invoiced, 2)})")
+    if received > PROC_TOL and invoiced <= PROC_TOL:
+        opn.append("received, not yet invoiced (GRNI)")
+    if received <= PROC_TOL and invoiced <= PROC_TOL:
+        opn.append("awaiting fulfillment")
+    if exc:
+        status = "exception"
+    elif accepted:
+        status = "matched"
+    elif received > PROC_TOL and invoiced > PROC_TOL and not opn:
+        status = "ready_to_match"
+    else:
+        status = "in_progress"
+    return status, exc, opn
+
+
+def _po_chain(c, po):
+    received = float(c.execute("SELECT COALESCE(SUM(amount_received),0) s FROM work_order WHERE po_id=%s", (po["id"],)).fetchone()["s"])
+    invoiced = float(c.execute("SELECT COALESCE(SUM(amount),0) s FROM vendor_invoice WHERE po_id=%s", (po["id"],)).fetchone()["s"])
+    acc = c.execute("SELECT accepted_by, accepted_at FROM procurement_match WHERE po_id=%s", (po["id"],)).fetchone()
+    status, exc, opn = _chain_status(po, received, invoiced, bool(acc))
+    return {"po_id": po["id"], "requisition_id": po["requisition_id"], "vendor": po["vendor"],
+            "gl_code": po["gl_code"], "gl_name": po["gl_name"],
+            "ordered": float(po["amount"]), "received": received, "invoiced": invoiced,
+            "status": status, "exceptions": exc, "open_items": opn,
+            "accepted_by": acc["accepted_by"] if acc else None}
+
+
+@app.get("/api/procurement")
+def procurement():
+    """Every procurement chain for the period with its three-way-match status, plus orphan
+    requisitions (approved, awaiting a PO). KPIs roll up matched / exception / open."""
+    with db() as c:
+        pos = c.execute("SELECT * FROM purchase_order WHERE period_end=%s ORDER BY id", (PERIOD,)).fetchall()
+        chains = [_po_chain(c, p) for p in pos]
+        # requisitions approved but not yet converted to any PO
+        linked = {p["requisition_id"] for p in pos if p["requisition_id"]}
+        orphans = c.execute("SELECT * FROM requisition WHERE period_end=%s AND status IN ('approved','draft') ORDER BY id", (PERIOD,)).fetchall()
+        for r in orphans:
+            if r["id"] not in linked:
+                chains.append({"po_id": None, "requisition_id": r["id"], "vendor": None,
+                               "ordered": float(r["amount"]), "received": 0.0, "invoiced": 0.0,
+                               "status": "in_progress", "exceptions": [], "open_items": ["awaiting PO"],
+                               "title": r["title"], "requestor": r["requestor"]})
+    kpi = {"chains": len(chains),
+           "matched": sum(1 for x in chains if x["status"] == "matched"),
+           "ready": sum(1 for x in chains if x["status"] == "ready_to_match"),
+           "exceptions": sum(1 for x in chains if x["status"] == "exception"),
+           "open": sum(1 for x in chains if x["status"] == "in_progress"),
+           "exposure": round(sum(x["ordered"] for x in chains if x["status"] == "exception"), 2)}
+    return {"period_end": PERIOD.isoformat(), "kpis": kpi, "chains": chains}
+
+
+@app.get("/api/procurement/{po_id}")
+def procurement_detail(po_id: str):
+    """One chain, fully expanded: Requisition → PO → receipts → invoices, the three-way deltas,
+    exception/open reasons, and the document evidence — the authorization trail behind the spend."""
+    with db() as c:
+        po = c.execute("SELECT * FROM purchase_order WHERE id=%s", (po_id,)).fetchone()
+        if not po:
+            raise HTTPException(404, "purchase order not found")
+        req = c.execute("SELECT * FROM requisition WHERE id=%s", (po["requisition_id"],)).fetchone() if po["requisition_id"] else None
+        receipts = c.execute("SELECT * FROM work_order WHERE po_id=%s ORDER BY id", (po_id,)).fetchall()
+        invoices = c.execute("SELECT * FROM vendor_invoice WHERE po_id=%s ORDER BY id", (po_id,)).fetchall()
+        chain = _po_chain(c, po)
+    return {"requisition": req, "purchase_order": po, "receipts": receipts, "invoices": invoices,
+            "match": chain,
+            "deltas": {"po_vs_received": round(chain["ordered"] - chain["received"], 2),
+                       "po_vs_invoiced": round(chain["ordered"] - chain["invoiced"], 2),
+                       "received_vs_invoiced": round(chain["received"] - chain["invoiced"], 2)}}
+
+
+@app.get("/api/procurement-exceptions")
+def procurement_exceptions():
+    """The exception work-queue: only chains with a genuine problem (over-invoiced, maverick spend,
+    invoiced-not-received, receipt/invoice mismatch)."""
+    rows = procurement()["chains"]
+    return {"exceptions": [x for x in rows if x["status"] == "exception"]}
+
+
+@app.post("/api/procurement/{po_id}/accept-match")
+def procurement_accept(po_id: str, note: str = "", user: str = "Maria L.", request: Request = None):
+    """A reviewer accepts a chain's three-way match (maker-checker over procurement). Requires the
+    approve capability and refuses if the chain still has exceptions; audited."""
+    with db() as c:
+        u = _user_caps(c, user)
+        if not u or "approve" not in u["capabilities"]:
+            raise HTTPException(403, f"{user} ({u['org_role'] if u else 'unknown'}) cannot accept a match")
+        po = c.execute("SELECT * FROM purchase_order WHERE id=%s", (po_id,)).fetchone()
+        if not po:
+            raise HTTPException(404, "purchase order not found")
+        if po["requisition_id"]:
+            req = c.execute("SELECT requestor FROM requisition WHERE id=%s", (po["requisition_id"],)).fetchone()
+            if req and req["requestor"] == u["name"]:
+                raise HTTPException(409, "segregation of duties: you cannot accept the match for a requisition you raised")
+        chain = _po_chain(c, po)
+        if chain["exceptions"]:
+            raise HTTPException(409, {"error": "chain has unresolved exceptions", "exceptions": chain["exceptions"]})
+        if chain["received"] <= PROC_TOL or chain["invoiced"] <= PROC_TOL:
+            raise HTTPException(409, "chain is not fully received and invoiced yet")
+        c.execute("""INSERT INTO procurement_match (po_id, accepted_by, note) VALUES (%s,%s,%s)
+                     ON CONFLICT (po_id) DO UPDATE SET accepted_by=EXCLUDED.accepted_by,
+                       accepted_at=now(), note=EXCLUDED.note""", (po_id, u["name"], note))
+        actor, role, ip = actor_of(c, request, user)
+        audit(c, actor, "procurement.accept_match", entity_type="purchase_order", entity_id=po_id,
+              period_end=PERIOD, detail={"requisition": po["requisition_id"], "ordered": float(po["amount"]),
+                                         "received": chain["received"], "invoiced": chain["invoiced"]},
+              actor_role=role, ip=ip)
+        c.commit()
+    return {"ok": True, "po_id": po_id, "accepted_by": u["name"], "status": "matched"}
