@@ -63,3 +63,62 @@ their scheduler) wired via the adapters instead.
 - GL adapters are **read-only** — never write to the ledger.
 - Secrets come from §H's store; nothing secret is committed.
 - The engine is the only place matching/tolerance logic lives — don't scatter it into the UI or adapters.
+
+---
+
+## Adding a feature — downstream deployment impact
+
+Standing up the stack is the easy part; the holes appear when a feature lands and a deployment step is
+missed. Use this as a **release checklist keyed by what kind of change you made**. (Maintainers: keep it
+honest — see "Spot-check every release" below.)
+
+**A. New table / schema change** (`stack/db/NN-*.sql`)
+- initdb applies `db/*.sql` **alphabetically** — number a new file after the last (`08`, `09`, `10`, …) and
+  mind FK order (a table must exist before another references it).
+- **A running database does not pick up a schema change.** In TEST you recreate the volume:
+  `docker compose down -v && docker compose up -d --build db api`. In **PROD you do NOT wipe the volume** —
+  `db/*.sql` is *initdb-only* (runs on an empty data dir). A production schema change needs a **forward
+  migration** (a versioned `ALTER`/`CREATE` applied by `psql`/a migration runner) in a maintenance window,
+  reversible, taken against a backup.
+- If the new table is evidence (sign-offs, comments, documents), add it to the **audit-package export** so
+  it isn't silently omitted.
+
+**B. New / changed API endpoint** (`stack/api/`)
+- Rebuild the api image (`--build`) — the running container holds a baked copy; editing the file on disk
+  does nothing until rebuild.
+- A new Python package under `api/` needs a `COPY` line in `stack/api/Dockerfile` (a missed COPY = an
+  `ImportError` only at container start).
+- A **state-mutating** endpoint must: resolve the *authenticated* actor (session overrides any client
+  `user=`), enforce the §F capability **and** segregation of duties, **append to the audit trail**, and
+  **404/409 on a no-op or illegal transition** (never write a phantom audit row).
+
+**C. New / changed web asset** (`web/`)
+- **Bump the `?v=` cache-bust on every asset URL** referencing the changed file. HTML is dynamic; `.js`/`.css`
+  sit behind a CDN cache (hours). A "stale UI / old branding" report is almost always a CDN cache HIT, not
+  stale source — bump the version, don't chase ghosts.
+- Redeploy to **every** static surface you run (each public + internal docroot). **Extract over** the docroot
+  (`tar -x` into it); never `rm -rf` a bind-mounted docroot (it detaches the mount).
+- A new page must be added to the sidebar nav (`renderSidebar()` in `app.js`) or it's unreachable.
+
+**D. A new configuration choice** (an adapter, a tolerance/threshold, a team, on-prem vs cloud)
+- Capture it **up front** as a question in [`../INTAKE.md`](../INTAKE.md) so a deployer supplies it *before*
+  the build, not as a surprise after. Every feature that hinges on a customer decision earns an INTAKE line.
+
+**E. New secret / external dependency**
+- Route it through §H's secret store (referenced, never inlined/committed), document it in `SECURITY.md`,
+  and add any new outbound host the deployment must reach.
+
+**F. Multiple editions / open-core**
+- A feature merged to one repo is *missing from the fork*. Port it (with the fork's branding) and **verify
+  both repos carry the same feature set** as part of the same release — don't let the editions drift.
+
+**Verify before you call it shipped:** syntax-gate (`py_compile` / `node --check`), a **fresh** end-to-end
+rebuild (not an incremental one over stale state — confirm staged files actually landed on the host first),
+and an actual **browser/DOM check** of the new surface.
+
+### Spot-check this guide every release
+This document is only worth anything if it stays true to the code. **At every feature close / wrap-up,
+spot-check this guide** against what you just shipped — did the feature introduce a new surface, a migration
+ordering constraint, a new secret, a new external dependency, a new cache key, a new edition to keep in
+sync? If yes and it isn't reflected above, add it. A deployment guide that silently lags the code is worse
+than none: it reports the holes are covered when they aren't.
