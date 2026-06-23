@@ -23,7 +23,7 @@ import etl
 import projects.funding_map as fmap
 from ferc.classifier import FERCClassifier
 
-app = FastAPI(title="OpenRecon API", version="1.11.0")
+app = FastAPI(title="OpenRecon API", version="1.11.1")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DB_URL = os.environ["DATABASE_URL"]
@@ -269,18 +269,38 @@ def carry_forward(key: str, user: str = "Joe B.", request: Request = None):
 
 @app.get("/api/period/{key}/audit-package")
 def audit_package(key: str):
-    """The close binder: account + project + roll-forward reconciliations, for external audit."""
+    """The close binder for external audit: the reconciliations themselves (account + project +
+    roll-forward) plus their supporting evidence — the authorization trail (procurement chains),
+    the cross-team discussion that resolved exceptions, and the project funding-allocation maps."""
     accts = accounts()["accounts"]
     projs = projects()["projects"]
+    proc = procurement()["chains"]
     with db() as c:
         rf = _rollforward_rows(c, "2026-FY")
+        # supporting evidence (all bound to the same immutable audit trail)
+        comments = c.execute(
+            """SELECT entity_type, entity_id, author, author_role, author_team, kind, to_team,
+                      body, attachment_name, attachment_ref, created_at
+               FROM recon_comment WHERE period_end=%s ORDER BY created_at, id""", (PERIOD,)).fetchall()
+        funding = c.execute(
+            """SELECT project_id, project_name, account_match, match_kind, account_name, funding_pct, expense_type
+               FROM project_funding ORDER BY project_id, id""").fetchall()
+        matches = c.execute(
+            "SELECT po_id, accepted_by, accepted_at, note FROM procurement_match ORDER BY po_id").fetchall()
     exceptions = (sum(1 for a in accts if a["status"] in (None, "variance", "unreconciled"))
                   + sum(1 for p in projs if p["status"] != "tied")
                   + sum(1 for r in rf if r["status"] != "tied"))
     total = len(accts) + len(projs) + len(rf)
+    proc_exceptions = sum(1 for p in proc if p["status"] == "exception")
     return {"software": "OpenRecon", "fiscal_year": "FY 2026", "period": key,
             "summary": {"reconciliations": total, "signed_off": total - exceptions, "open_exceptions": exceptions},
-            "account_reconciliations": accts, "project_reconciliations": projs, "year_end_rollforward": rf}
+            "evidence_summary": {"discussion_comments": len(comments),
+                                 "funding_mapped_projects": len({f["project_id"] for f in funding}),
+                                 "procurement_chains": len(proc), "procurement_exceptions": proc_exceptions,
+                                 "procurement_matches_accepted": len(matches)},
+            "account_reconciliations": accts, "project_reconciliations": projs, "year_end_rollforward": rf,
+            "project_funding_maps": funding, "discussion_threads": comments,
+            "procurement_chains": proc, "procurement_matches": matches}
 
 
 # ───────────── RBAC: users, capabilities, and gated approval (segregation of duties) ─────────────
