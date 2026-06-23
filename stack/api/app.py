@@ -20,9 +20,10 @@ import engine
 import notify
 import auth
 import etl
+import projects.funding_map as fmap
 from ferc.classifier import FERCClassifier
 
-app = FastAPI(title="OpenRecon API", version="1.8.0")
+app = FastAPI(title="OpenRecon API", version="1.9.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DB_URL = os.environ["DATABASE_URL"]
@@ -581,3 +582,81 @@ def import_rollback(batch_id: str, user: str = "Robert K.", request: Request = N
               actor_role=role, ip=ip)
         c.commit()
     return res
+
+
+# ═══════════════════════════ project funding-allocation map (#23) ═══════════════════════════
+@app.get("/api/projects/funding-map")
+def funding_map_get():
+    """The loaded per-project funding spread (account/range → %)."""
+    with db() as c:
+        rows = c.execute("""SELECT project_id, project_name, account_match, match_kind, account_name,
+                                   funding_pct, expense_type
+                            FROM project_funding ORDER BY project_id, id""").fetchall()
+    out: dict = {}
+    for r in rows:
+        p = out.setdefault(r["project_id"], {"name": r["project_name"], "funding": []})
+        p["funding"].append({"match": r["account_match"], "kind": r["match_kind"],
+                             "pct": float(r["funding_pct"]), "account_name": r["account_name"],
+                             "expense_type": r["expense_type"]})
+    return {"projects": out}
+
+
+@app.post("/api/projects/funding-map")
+def funding_map_load(source: str, user: str = "Robert K.", request: Request = None):
+    """Load a funding-map CSV (from IMPORT_DIR), validate it (totals=100, ranges, no overlaps),
+    and store the spread. Reviewer/director-gated, audited. 422 with the problem list if invalid."""
+    path = os.path.join(os.environ.get("IMPORT_DIR", "/samples"), os.path.basename(source))
+    if not os.path.exists(path):
+        raise HTTPException(404, f"source not found: {source}")
+    parsed, errors, warnings = fmap.validate(fmap.load(path))
+    if errors:
+        raise HTTPException(422, {"errors": errors, "warnings": warnings})
+    cfg = fmap.to_config(parsed)["projects"]
+    with db() as c:
+        actor, role, ip = actor_of(c, request, user)
+        caps = _user_caps(c, actor)
+        if not caps or "review" not in caps["capabilities"]:
+            raise HTTPException(403, "loading a funding map requires a reviewer/director")
+        rows = 0
+        for pid, p in cfg.items():
+            c.execute("DELETE FROM project_funding WHERE project_id=%s", (pid,))
+            for f in p["funding"]:
+                c.execute("""INSERT INTO project_funding
+                               (project_id, project_name, account_match, match_kind, account_name,
+                                funding_pct, expense_type)
+                             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                          (pid, p["name"], f["match"], f["kind"], f["account_name"], f["pct"], f["expense_type"]))
+                rows += 1
+        audit(c, actor, "project.funding_map_load", entity_type="project_funding", entity_id=source,
+              detail={"projects": len(cfg), "rows": rows}, actor_role=role, ip=ip)
+        c.commit()
+    return {"ok": True, "projects": len(cfg), "rows": rows, "warnings": warnings}
+
+
+@app.post("/api/project/{pid}/allocate")
+def project_allocate(pid: str, total: float | None = None, user: str = "Joe B.", request: Request = None):
+    """Generate a project's allocation lines from its funding map × the project cost (default = the
+    project's source_amount, or override with `total`). Replaces project_line; lines tie out to the
+    penny (last line absorbs the rounding residual). Audited."""
+    with db() as c:
+        p = c.execute("SELECT id, name, source_amount FROM project_reconciliation WHERE id=%s", (pid,)).fetchone()
+        if not p:
+            raise HTTPException(404, "project not found")
+        fnd = c.execute("""SELECT account_match, account_name, funding_pct FROM project_funding
+                           WHERE project_id=%s ORDER BY id""", (pid,)).fetchall()
+        if not fnd:
+            raise HTTPException(409, f"no funding map loaded for {pid} — POST /api/projects/funding-map first")
+        amount = float(total) if total is not None else float(p["source_amount"])
+        lines = fmap.allocate(
+            {"funding": [{"match": r["account_match"], "account_name": r["account_name"],
+                          "pct": float(r["funding_pct"])} for r in fnd]}, amount)
+        c.execute("DELETE FROM project_line WHERE project_id=%s", (pid,))
+        for l in lines:
+            c.execute("""INSERT INTO project_line (project_id, gl_code, gl_name, allocated_amount)
+                         VALUES (%s,%s,%s,%s)""", (pid, l["match"], l["account_name"], l["allocated"]))
+        actor, role, ip = actor_of(c, request, user)
+        audit(c, actor, "project.allocate", entity_type="project", entity_id=pid, period_end=PERIOD,
+              detail={"total": amount, "lines": len(lines)}, actor_role=role, ip=ip)
+        c.commit()
+    tied = round(sum(l["allocated"] for l in lines), 2) == round(amount, 2)
+    return {"ok": True, "project": pid, "total": amount, "lines": lines, "ties_out": tied}
