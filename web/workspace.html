@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRecon — Reconciliation overview</title>
+<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side"></aside>
+  <div class="main">
+    <header class="top">
+      <div>
+        <h1>Reconciliation overview</h1>
+        <div class="crumb" id="crumb"></div>
+      </div>
+      <div class="sp"></div>
+      <a class="pill" href="how-it-works.html"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5"/></svg>Run reconciliation</a>
+      <a class="btn" href="documents.html"><svg viewBox="0 0 24 24"><path d="M12 19V6M5 12l7-7 7 7"/></svg>Upload statement</a>
+      <div class="av2">JB</div>
+    </header>
+    <div class="body">
+      <div class="kpis" id="kpis"></div>
+      <div class="prog">
+        <div class="h"><b>Close progress</b><span id="progtxt"></span></div>
+        <div class="bar"><i id="progbar" style="width:0%"></i></div>
+      </div>
+      <div class="panel">
+        <div class="ph">
+          <b>Accounts</b>
+          <div class="seg" id="filters">
+            <span data-f="all" class="on">All <i>·</i></span>
+            <span data-f="mine">Assigned to me <i>·</i></span>
+            <span data-f="exceptions">Exceptions <i>·</i></span>
+            <span data-f="variance">Variance <i>·</i></span>
+            <span data-f="unreconciled">Unreconciled <i>·</i></span>
+            <span data-f="reconciled">Reconciled <i>·</i></span>
+          </div>
+        </div>
+        <table>
+          <thead><tr>
+            <th>Account</th><th>Bank</th><th class="num">GL balance</th><th class="num">Statement balance</th><th class="num">Variance</th><th>Status</th><th>Work</th><th class="act">&nbsp;</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/app.js?v=1.9.0"></script>
+<script>
+  renderSidebar('overview');
+  const k = kpis();
+  document.getElementById('crumb').textContent = RECON.period + ' · ' + RECON.asOf;
+  document.getElementById('progtxt').textContent = `${k.reconciled} of ${k.inScope} reconciled · ${k.progress}%`;
+  setTimeout(()=>{ document.getElementById('progbar').style.width = k.progress + '%'; }, 120);
+
+  const kdefs = [
+    {f:'all', lab:'Accounts in scope', num:k.inScope, cls:'', chipbg:'var(--slatebg)', icon:'<path d="M3 3v18h18M8 16l3.5-4 3 2.5L20 8"/>', stroke:'#5A6385', foot:'across 6 account groups'},
+    {f:'reconciled', lab:'Reconciled', num:k.reconciled, cls:'g', chipbg:'var(--greenbg)', icon:'<path d="M20 6 9 17l-5-5"/>', stroke:'#11A150', foot:'matched within tolerance'},
+    {f:'variance', lab:'Variance', num:k.variance, cls:'a', chipbg:'var(--amberbg)', icon:'<path d="M12 9v4m0 4h.01M10.3 4.3 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z"/>', stroke:'#C9790B', foot:money(k.varTotal)+' to resolve', footcls:'a'},
+    {f:'unreconciled', lab:'Unreconciled', num:k.unreconciled, cls:'r', chipbg:'var(--redbg)', icon:'<circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/>', stroke:'#E0413F', foot:'awaiting statement', footcls:'r'}
+  ];
+  document.getElementById('kpis').innerHTML = kdefs.map(d=>`
+    <div class="kpi" data-kf="${d.f}">
+      <div class="lab">${d.lab}</div>
+      <div class="row"><div class="num ${d.cls}">${d.num}</div><div class="chip" style="background:${d.chipbg}"><svg viewBox="0 0 24 24" stroke="${d.stroke}" fill="none">${d.icon}</svg></div></div>
+      <div class="foot ${d.footcls||''}">${d.foot}</div>
+    </div>`).join('');
+
+  const groups = {};
+  RECON.accounts.forEach(a=>{ (groups[a.grp]=groups[a.grp]||[]).push(a); });
+  const statusTag = s => s==='reconciled'?'<span class="tag t-ok">Reconciled</span>':s==='variance'?'<span class="tag t-var">Variance</span>':'<span class="tag t-un">Unreconciled</span>';
+  const workPill = w => `<span class="ws ${w}">${WORK_LABELS[w]}</span>`;
+  const actLink = a => a.status==='reconciled'?`<a class="lnk q" href="account.html?id=${a.id}">View</a>`:a.status==='variance'?`<a class="lnk" href="account.html?id=${a.id}">Review →</a>`:`<a class="lnk" href="account.html?id=${a.id}">Locate statement →</a>`;
+  let rows='';
+  for(const [grp,accts] of Object.entries(groups)){
+    rows += `<tr class="grp"><td colspan="8">${grp}</td></tr>`;
+    accts.forEach(a=>{
+      rows += `<tr class="acctrow" data-status="${a.status}" data-assigned="${a.assigned}" onclick="location.href='account.html?id=${a.id}'" ${a.status==='variance'?'style="background:#FFFBF4"':''}>
+        <td class="acct"><b>${a.name}</b><span>${a.code} · ${a.mask} · ${a.assigned}</span></td>
+        <td><div class="bank"><span class="dot" style="background:${a.dot}"></span>${a.bank}</div></td>
+        <td class="num">${money(a.gl)}</td>
+        <td class="num${a.stmt===null?' muted':''}">${money(a.stmt)}</td>
+        <td class="num${a.status==='variance'?' var-pos':a.variance===null?' muted':''}">${money(a.variance)}</td>
+        <td>${statusTag(a.status)}</td>
+        <td>${workPill(a.work)}</td>
+        <td class="act" onclick="event.stopPropagation()">${actLink(a)}</td>
+      </tr>`;
+    });
+  }
+  document.getElementById('tbody').innerHTML = rows;
+
+  const rowsEl=[...document.querySelectorAll('tbody tr.acctrow')];
+  const grpsEl=[...document.querySelectorAll('tbody tr.grp')];
+  const chips=[...document.querySelectorAll('#filters span')];
+  const kcards=[...document.querySelectorAll('.kpi')];
+  function matches(r,f){const s=r.dataset.status;
+    if(f==='all')return true; if(f==='mine')return r.dataset.assigned===RECON.currentUser;
+    if(f==='exceptions')return s==='variance'||s==='unreconciled'; return s===f;}
+  function apply(f){
+    rowsEl.forEach(r=>r.style.display=matches(r,f)?'':'none');
+    grpsEl.forEach(g=>{let n=g.nextElementSibling,vis=false;
+      while(n&&!n.classList.contains('grp')){if(n.dataset.status&&n.style.display!=='none'){vis=true;break;}n=n.nextElementSibling;}
+      g.style.display=vis?'':'none';});
+    chips.forEach(c=>c.classList.toggle('on',c.dataset.f===f));
+    kcards.forEach(c=>c.classList.toggle('sel',c.dataset.kf===f));
+  }
+  chips.forEach(c=>{c.querySelector('i').textContent=rowsEl.filter(r=>matches(r,c.dataset.f)).length;c.onclick=()=>apply(c.dataset.f);});
+  kcards.forEach(c=>c.onclick=()=>apply(c.dataset.kf));
+  const f0 = new URLSearchParams(location.search).get('f') || 'all';
+  apply(f0);
+</script>
+</body>
+</html>

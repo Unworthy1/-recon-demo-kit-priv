@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRecon — account detail</title>
+<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+<style>
+  .wrap{max-width:980px;margin:0 auto;padding:30px 26px 60px}
+  .back{display:inline-flex;align-items:center;gap:7px;color:var(--muted);text-decoration:none;font-size:13.5px;font-weight:600;margin-bottom:18px}
+  .back svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2}
+  .head{display:flex;align-items:center;gap:16px;margin-bottom:22px}
+  .head .mk{width:48px;height:48px;border-radius:13px;background:var(--grad);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:18px}
+  .head h1{font-size:24px;font-weight:700;letter-spacing:-.5px}
+  .head .sub{font-size:13.5px;color:var(--muted);margin-top:2px}
+  .head .sp{flex:1}
+  .tag{font-size:13px;padding:8px 15px;border-radius:22px}
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .col{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;box-shadow:var(--shadow)}
+  .col .ct{font-size:11.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);font-weight:700;display:flex;align-items:center;gap:8px}
+  .col .ct .src{margin-left:auto;font-size:11px;color:var(--slate);background:var(--slatebg);padding:3px 9px;border-radius:20px;letter-spacing:.3px}
+  .col .big{font-size:30px;font-weight:800;letter-spacing:-1px;margin:14px 0 4px;font-variant-numeric:tabular-nums}
+  .kv{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+  .kv div{display:flex;justify-content:space-between;font-size:13.5px;padding:6px 0}
+  .kv div span:first-child{color:var(--muted)}
+  .kv div span:last-child{font-weight:600;font-variant-numeric:tabular-nums}
+  .verdict{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin-top:18px;box-shadow:var(--shadow)}
+  .verdict.var{border-color:#F3D9A6;background:#FFFCF5}
+  .verdict .vr{display:flex;align-items:center;gap:14px}
+  .verdict .amt{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums}
+  .amber{color:var(--amber)} .green{color:var(--green)} .muted{color:#A6AEC9}
+  .verdict .vl{font-size:13px;color:var(--muted);font-weight:600}
+  .actions{margin-top:16px;display:flex;flex-direction:column;gap:12px}
+  textarea{width:100%;min-height:70px;border:1px solid var(--line);border-radius:11px;padding:11px 13px;font:inherit;font-size:14px;resize:vertical}
+  textarea:focus{outline:none;border-color:var(--pink);box-shadow:0 0 0 3px rgba(255,45,120,.12)}
+  .frow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .note{font-size:13.5px;color:var(--muted)}
+  .support{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin-top:18px;box-shadow:var(--shadow)}
+  .support .sh{display:flex;align-items:baseline;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  .support .sh b{font-size:15px;font-weight:700}
+  .support .sh span{font-size:12.5px;color:var(--muted)}
+  .srow{display:flex;align-items:center;gap:13px;padding:11px 14px;border:1px solid var(--line);border-radius:11px;background:#FAFBFE;margin-bottom:9px}
+  .srow .si{width:36px;height:36px;border-radius:9px;background:#EEF1F8;display:flex;align-items:center;justify-content:center;color:var(--slate);font-weight:800;font-size:11px}
+  .srow .sm{flex:1;min-width:0}
+  .srow .sm b{font-size:13.5px;font-weight:600;display:block}
+  .srow .sm span{font-size:12px;color:var(--muted)}
+  .sbtn{font-size:12.5px;font-weight:700;color:var(--pink);text-decoration:none;white-space:nowrap}
+  .supform{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px dashed var(--line);padding-top:15px;margin-top:6px}
+  .supform input[type=text]{flex:1;min-width:200px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;font-size:13.5px}
+  .supform input[type=text]:focus{outline:none;border-color:var(--pink);box-shadow:0 0 0 3px rgba(255,45,120,.12)}
+  .steps{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .stp{flex:1;min-width:120px;border:1px solid var(--line);border-radius:11px;padding:11px 13px;background:#fff}
+  .stp.r.ack{border-color:#5A6385;background:#EEF1F8} .stp.r.assigned{border-color:#185FA5;background:#E6F1FB} .stp.r.progress{border-color:#C9790B;background:#FBF0DA} .stp.r.resolved{border-color:#11A150;background:#E7F7EE}
+  .stp .t{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:700}
+  .stp .t{color:var(--muted)} .stp.r .t{color:var(--text)}
+  .stp .w{font-size:13px;font-weight:600;margin-top:3px;color:var(--text)}
+  .rolesline{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .rchip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:11px;padding:8px 12px;font-size:13px}
+  .rchip .rl2{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:700}
+  .rchip .tg{font-size:11.5px;color:var(--slate);background:var(--slatebg);border-radius:10px;padding:2px 8px}
+  .sod{font-size:12px;color:var(--muted);font-weight:600}
+  .gate{margin-top:12px;font-size:13px;font-weight:600;border-radius:10px;padding:10px 13px}
+  .gate.g{background:var(--greenbg);color:var(--green)} .gate.b{background:#E6F1FB;color:#185FA5} .gate.p{background:#EEEDFE;color:#534AB7} .gate.m{background:var(--slatebg);color:var(--slate)}
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap"></div>
+<script src="assets/app.js?v=1.9.0"></script>
+<script>
+  const id = new URLSearchParams(location.search).get('id') || RECON.accounts[0].id;
+  const a = RECON.accounts.find(x=>x.id===id) || RECON.accounts[0];
+  const tagFor = s => s==='reconciled'?'<span class="tag t-ok">Reconciled</span>':s==='variance'?'<span class="tag t-var">Variance</span>':'<span class="tag t-un">Unreconciled</span>';
+  const docs = a.status!=='unreconciled' ? [
+    {id:`STMT-${a.id}`, name:`${a.bank.replace(/\s+/g,'_')}_statement_May2026.pdf`, by:'Paperless OCR', when:'2026-06-01 08:14', tag:'Source statement'},
+  ] : [];
+  if(a.status==='variance') docs.push({id:`SUP-${a.id}`, name:'treasury_wire_confirmation_8842.pdf', by:'Support team', when:'2026-06-02 11:39', tag:'Supporting'});
+
+  const stmtBlock = a.stmt===null ? `
+      <div class="big muted">—</div>
+      <p class="note" style="margin-top:10px">No statement has been matched to this account yet. Upload the bank statement from the overview, then run reconciliation.</p>`
+    : `
+      <div class="big">${money(a.stmt)}</div>
+      <div class="kv">
+        <div><span>Account number</span><span>${a.ocr_acct||'—'}</span></div>
+        <div><span>Statement date</span><span>${a.ocr_date||'—'}</span></div>
+        <div><span>Bank</span><span>${a.bank}</span></div>
+      </div>
+      <div style="margin-top:14px"><a class="btn ghost" href="documents.html?doc=STMT-${a.id}"><svg viewBox="0 0 24 24"><path d="M14 3v5h5M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>View source document</a></div>`;
+
+  const workOrder=['ack','assigned','progress','resolved'];
+  const wIdx=workOrder.indexOf(a.work);
+  const stepsHtml = workOrder.map((w,i)=>`<div class="stp ${i<=wIdx?'r '+w:''}"><div class="t">${i+1}</div><div class="w">${WORK_LABELS[w]}</div></div>`).join('');
+  const _prep=a.assigned, _appr=approverFor(a), _rev=reviewerFor(a);
+  const _rchip=(who,label,role)=>`<span class="rchip"><span class="rl2">${label}</span><b>${who}</b><span class="tg">${roleLabel(role)}</span></span>`;
+  const _g=(()=>{const v=RECON.viewer, vr=viewerRole();
+    if(v===_prep) return {t:'You are the <b>preparer</b> of this reconciliation.', c:'g'};
+    if(v===_appr && can(vr,'approve')) return {t:'You are the <b>approver</b> — you may approve this (segregation of duties: not your own prep).', c:'b'};
+    if(can(vr,'review')) return {t:'You may <b>review &amp; sign off</b> (Principal / Director).', c:'p'};
+    return {t:'View only — you are neither the preparer nor the approver for this item.', c:'m'};})();
+  const rolesHtml=`<div class="rolesline">${_rchip(_prep,'Preparer',roleKey(_prep))}${_rchip(_appr,'Approver',roleKey(_appr))}${_rchip(_rev,'Reviewer',roleKey(_rev))}<span class="sod">approver ≠ preparer</span></div><div class="gate ${_g.c}">${_g.t}</div>`;
+  // approver action bar: approve, or send back to the preparer (which emails them)
+  const apprAction = _g.c==='b' ? `<div id="apprbar" style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">${
+    a.review==='approved' ? '<span class="note" style="color:var(--green);font-weight:600">✓ You approved this.</span>'
+    : a.review==='sent_back' ? `<span class="note" style="color:var(--amber);font-weight:600">↩ Sent back to ${_prep} — preparer notified by email.</span>`
+    : `<button class="btn" onclick="approveAcct()"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Approve</button>
+       <button class="btn ghost" onclick="sendBackAcct()"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>Send back &amp; notify ${_prep}</button>
+       <span class="note">Sending back emails ${_prep} at ${emailOf(_prep)}.</span>`
+  }</div>` : '';
+
+  let verdict='';
+  if(a.variance!==null){
+    verdict = `<div class="verdict ${a.status==='variance'?'var':''}" id="verdict">
+      <div class="vr">
+        <div><div class="amt ${a.status==='variance'?'amber':'green'}">${money(a.variance)}</div><div class="vl">GL minus statement</div></div>
+        <div style="flex:1"></div>
+        ${a.status==='reconciled'?`<span class="note">Matched within tolerance · resolved by ${a.assigned}.</span>`:''}
+      </div>
+      ${a.status==='variance'?`
+      <div class="actions">
+        <textarea id="resnote" placeholder="Resolution note — e.g. $3,000 deposit in transit, clears 6/2"></textarea>
+        <div class="frow">
+          <button class="btn" onclick="resolve()"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Mark resolved</button>
+          <span class="note">Records who/when and clears the exception on the overview.</span>
+        </div>
+      </div>`:''}
+    </div>`;
+  }
+
+  document.getElementById('wrap').innerHTML = `
+    <a class="back" href="workspace.html"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>Back to overview</a>
+    <div class="head">
+      <div class="mk">${a.bank[0]}</div>
+      <div><h1>${a.name}</h1><div class="sub">${a.code} · ${a.bank} · ${a.mask} · ${a.grp}</div></div>
+      <div class="sp"></div>
+      ${tagFor(a.status)}
+    </div>
+    <div class="cmp">
+      <div class="col">
+        <div class="ct">General ledger<span class="src">Dynamics GP (mock)</span></div>
+        <div class="big">${money(a.gl)}</div>
+        <div class="kv">
+          <div><span>GL account</span><span>${a.code}</span></div>
+          <div><span>As of</span><span>${a.as_of}</span></div>
+          <div><span>Tolerance</span><span>${money(a.tol)}</span></div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="ct">Bank statement<span class="src">Paperless OCR</span></div>
+        ${stmtBlock}
+      </div>
+    </div>
+    <div class="support">
+      <div class="sh"><b>Supporting documents</b><span>attached to this account for the approver to review</span></div>
+      <div id="slist">${docs.length?docs.map(d=>`<div class="srow"><div class="si">PDF</div><div class="sm"><b>${d.name}</b><span>${d.by} · ${d.when} · ${d.tag}</span></div><a class="sbtn" href="documents.html?doc=${d.id}">Open in Paperless ↗</a></div>`).join(''):'<p class="note" style="margin-bottom:14px">No supporting documents attached yet.</p>'}</div>
+      <div class="supform">
+        <input type="text" id="supnote" placeholder="Note (optional) — e.g. 'Treasury wire confirmation, ref #8842'">
+        <button class="btn" onclick="attach()"><svg viewBox="0 0 24 24"><path d="M12 19V6M5 12l7-7 7 7"/></svg>Attach PDF</button>
+      </div>
+    </div>
+    <div class="support" style="margin-top:18px">
+      <div class="sh"><b>Work status</b><span>preparer → approver → reviewer</span></div>
+      <div class="steps">${stepsHtml}</div>
+      ${rolesHtml}${apprAction}
+    </div>
+    ${verdict}`;
+
+  function resolve(){
+    const v=document.getElementById('verdict');
+    v.classList.remove('var');
+    v.querySelector('.amt').className='amt green';
+    v.querySelector('.actions').innerHTML='<span class="note" style="font-weight:600;color:var(--green)">✓ Marked resolved by '+RECON.currentUser+' just now — exception cleared on the overview.</span>';
+  }
+  function attach(){
+    const n=document.getElementById('supnote').value.trim();
+    const html=`<div class="srow"><div class="si">PDF</div><div class="sm"><b>uploaded_document.pdf</b><span>${RECON.currentUser} · just now${n?' · '+n:''} · queued for OCR</span></div><span class="sbtn" style="color:var(--amber)">processing…</span></div>`;
+    const list=document.getElementById('slist'); if(list.querySelector('.note')) list.innerHTML='';
+    list.insertAdjacentHTML('beforeend',html); document.getElementById('supnote').value='';
+  }
+  function approveAcct(){
+    a.review='approved';
+    document.getElementById('apprbar').innerHTML='<span class="note" style="color:var(--green);font-weight:600">✓ You approved this just now.</span>';
+  }
+  function sendBackAcct(){
+    notifySendBack(a, RECON.viewer, (reason)=>{
+      a.review='sent_back'; a._sbReason=reason;
+      document.getElementById('apprbar').innerHTML=`<span class="note" style="color:var(--amber);font-weight:600">↩ Sent back to ${a.assigned} — preparer notified by email${reason?': "'+reason+'"':''}.</span>`;
+    });
+  }
+  window.resolve=resolve; window.attach=attach; window.approveAcct=approveAcct; window.sendBackAcct=sendBackAcct;
+</script>
+</body>
+</html>

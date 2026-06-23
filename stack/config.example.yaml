@@ -1,0 +1,19 @@
+# Deployment config — the coding agent fills this from INTAKE.md.
+# The demo defaults below run against the bundled sample CSVs, so `POST /api/reconcile`
+# reproduces the demo board out of the box. Swap each block for your real adapter.
+
+gl:                              # INTAKE §C — one GL source
+  adapter: csv_export            #   csv_export | dynamics_gp | netsuite | odbc
+  args:
+    path: /samples/gl_trial_balance.csv
+
+treasury:                        # INTAKE §B — one block per statement source
+  - adapter: csv_statements      #   csv_statements | watched_folder | imap | sftp | bank_api | manual_upload
+    args:
+      path: /samples/statements.csv
+
+dms:                             # INTAKE §D — one DMS (optional)
+  adapter: filesystem            #   paperless | filesystem | laserfiche | sharepoint
+  args:
+    root: /data/documents
+    url_base: ""

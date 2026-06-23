@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRecon — Director dashboard</title>
+<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+<link rel="stylesheet" href="assets/pages.css?v=1.9.0">
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side"></aside>
+  <div class="main">
+    <header class="top">
+      <div><h1>Director dashboard</h1><div class="crumb" id="crumb"></div></div>
+      <div class="sp"></div>
+      <span class="pill"><svg viewBox="0 0 24 24"><path d="M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/></svg>May 2026 close</span>
+      <div class="av2">JB</div>
+    </header>
+    <div class="body">
+      <div class="kpis" id="kpis"></div>
+
+      <div class="dgrid">
+        <div class="dcard">
+          <h3>Throughput by preparer<span class="hint">reconciled · assigned</span></h3>
+          <div id="leader" style="margin-top:8px"></div>
+        </div>
+        <div class="dcard">
+          <h3>Status mix</h3>
+          <div class="donut" id="donut"><div class="dc"><b id="donutpct">0%</b><span>reconciled</span></div></div>
+          <div class="legend" id="legend"></div>
+        </div>
+      </div>
+
+      <div class="dgrid" style="grid-template-columns:1fr 1fr">
+        <div class="dcard">
+          <h3>Open exceptions by age<span class="hint">business days</span></h3>
+          <div class="agewrap" id="aging" style="margin-top:10px"></div>
+        </div>
+        <div class="dcard">
+          <h3>Variance to resolve by group<span class="hint">absolute $</span></h3>
+          <svg class="barsvg" id="varbars" style="margin-top:10px"></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/app.js?v=1.9.0"></script>
+<script>
+  renderSidebar('dashboard');
+  const A=RECON.accounts, k=kpis();
+  document.getElementById('crumb').textContent = RECON.period + ' · ' + RECON.asOf;
+
+  const kd=[
+    {lab:'Close progress', num:k.progress+'%', cls:'', foot:`${k.reconciled} of ${k.inScope} reconciled`, bg:'var(--slatebg)', stroke:'#5A6385', icon:'<path d="M3 3v18h18M7 14l3-3 3 2 5-6"/>'},
+    {lab:'Open exceptions', num:k.exceptions, cls:'a', foot:money(k.varTotal)+' in variance', bg:'var(--amberbg)', stroke:'#C9790B', icon:'<path d="M12 9v4m0 4h.01M10.3 4.3 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z"/>', footcls:'a'},
+    {lab:'Avg cycle time', num:'1.8d', cls:'', foot:'drop → reconciled', bg:'var(--greenbg)', stroke:'#11A150', icon:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'},
+    {lab:'On-time sign-off', num:'92%', cls:'g', foot:'vs. close calendar', bg:'var(--greenbg)', stroke:'#11A150', icon:'<path d="M20 6 9 17l-5-5"/>'}
+  ];
+  document.getElementById('kpis').innerHTML = kd.map(d=>`
+    <div class="kpi" style="cursor:default">
+      <div class="lab">${d.lab}</div>
+      <div class="row"><div class="num ${d.cls}">${d.num}</div><div class="chip" style="background:${d.bg}"><svg viewBox="0 0 24 24" stroke="${d.stroke}" fill="none">${d.icon}</svg></div></div>
+      <div class="foot ${d.footcls||''}">${d.foot}</div>
+    </div>`).join('');
+
+  // throughput by preparer
+  const lead = RECON.team.map(t=>{
+    const own=A.filter(a=>a.assigned===t.name);
+    const done=own.filter(a=>a.status==='reconciled').length;
+    return {...t, total:own.length, done};
+  }).sort((x,y)=>y.done-x.done);
+  const maxTotal=Math.max(...lead.map(l=>l.total));
+  document.getElementById('leader').innerHTML = lead.map(l=>`
+    <div class="lead-row">
+      <div class="av">${l.init}</div>
+      <div style="min-width:120px"><div class="nm">${l.name}</div><div class="rl">${l.role}</div></div>
+      <div class="mtr"><i data-w="${Math.round(l.done/maxTotal*100)}" style="width:0%"></i></div>
+      <div class="ct">${l.done} / ${l.total}</div>
+    </div>`).join('');
+
+  // status mix donut
+  const segs=[
+    {lab:'Reconciled', n:k.reconciled, c:'#11A150'},
+    {lab:'Variance', n:k.variance, c:'#C9790B'},
+    {lab:'Unreconciled', n:k.unreconciled, c:'#E0413F'}
+  ];
+  const tot=k.inScope; let acc=0; const stops=segs.map(s=>{const from=acc/tot*360; acc+=s.n; const to=acc/tot*360; return `${s.c} ${from}deg ${to}deg`;}).join(',');
+  document.getElementById('donut').style.background=`conic-gradient(${stops})`;
+  document.getElementById('donutpct').textContent=k.progress+'%';
+  document.getElementById('legend').innerHTML=segs.map(s=>`<div class="lg"><span class="sw" style="background:${s.c}"></span>${s.lab}<span class="lv">${s.n}</span></div>`).join('');
+
+  // exceptions aging (synthesized buckets from the open items)
+  const exceptions=A.filter(a=>a.status!=='reconciled');
+  const buckets=[{lab:'0–2 days',c:'#11A150'},{lab:'3–5 days',c:'#C9790B'},{lab:'6–10 days',c:'#E0413F'},{lab:'10+ days',c:'#A32D2D'}];
+  const ageOf=a=>{ if(a.status==='unreconciled')return a.id.startsWith('14')?3:1; if(a.work==='ack')return 2; if(a.work==='progress')return 0; return 1; };
+  const counts=[0,0,0,0]; exceptions.forEach(a=>{const d=ageOf(a); counts[d<=2?0:d<=5?1:d<=10?2:3]++;});
+  const maxAge=Math.max(1,...counts);
+  document.getElementById('aging').innerHTML=buckets.map((b,i)=>`
+    <div class="agerow"><div class="lab">${b.lab}</div><div class="track"><i data-w="${Math.round(counts[i]/maxAge*100)}" style="width:0%;background:${b.c}"></i></div><div class="ct">${counts[i]}</div></div>`).join('');
+
+  // variance by group (SVG horizontal bars)
+  const byGroup={}; A.filter(a=>a.status==='variance').forEach(a=>{byGroup[a.grp]=(byGroup[a.grp]||0)+Math.abs(a.variance);});
+  const entries=Object.entries(byGroup).sort((a,b)=>b[1]-a[1]);
+  const svg=document.getElementById('varbars');
+  const W=420, rowH=44, padL=150, padR=70, barMax=W-padL-padR;
+  const maxVar=Math.max(...entries.map(e=>e[1]),1);
+  svg.setAttribute('viewBox',`0 0 ${W} ${entries.length*rowH+10}`);
+  svg.innerHTML=entries.map(([g,v],i)=>{
+    const y=i*rowH+14, w=v/maxVar*barMax;
+    return `<text class="lbl" x="0" y="${y+15}">${g}</text>
+      <rect class="track" x="${padL}" y="${y}" width="${barMax}" height="22" rx="6"></rect>
+      <rect class="fillb" x="${padL}" y="${y}" width="0" height="22" rx="6"><animate attributeName="width" from="0" to="${w}" dur="0.9s" fill="freeze" calcMode="spline" keySplines="0.22 1 0.36 1" keyTimes="0;1"/></rect>
+      <text class="val" x="${W-4}" y="${y+15}" text-anchor="end">${money(v)}</text>`;
+  }).join('');
+
+  // animate meters
+  setTimeout(()=>{ document.querySelectorAll('.mtr i,.agerow i').forEach(el=>el.style.width=el.dataset.w+'%'); }, 150);
+</script>
+</body>
+</html>

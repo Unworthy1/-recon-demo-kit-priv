@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRecon — FY 2026 roll-forward</title>
+<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+<style>
+  .back{display:inline-flex;align-items:center;gap:7px;color:var(--muted);text-decoration:none;font-size:13.5px;font-weight:600;margin-bottom:6px}
+  .back svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2}
+  thead th.op{color:var(--slate)}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+  .opcol{color:var(--muted)} .eq{color:#11A150;font-weight:700} .plus{color:#185FA5}
+  .cf{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin-top:18px;box-shadow:var(--shadow)}
+  .cf .h{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .cf .h b{font-size:15px;font-weight:700}.cf .h span{font-size:13px;color:var(--muted)}
+  .cfrow{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid #F2F4FA;font-size:13.5px}
+  .cfrow:first-of-type{border-top:none}.cfrow .c{font-variant-numeric:tabular-nums;font-weight:600;min-width:150px;text-align:right}
+  .cfrow svg{width:16px;height:16px;stroke:var(--muted);fill:none;stroke-width:2}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side"></aside>
+  <div class="main">
+    <header class="top">
+      <div><a class="back" href="periods.html"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>Year-end close</a><h1>FY 2026 — roll-forward continuity</h1><div class="crumb">opening + activity = closing, then tie the closing to the subledger/statement evidence</div></div>
+    </header>
+    <div class="body">
+      <div class="kpis" id="kpis"></div>
+      <div class="panel">
+        <div class="ph"><b>Balance continuity</b><span style="margin-left:auto;font-size:12.5px;color:var(--muted);font-weight:600">tolerance <span id="tol"></span></span></div>
+        <table>
+          <thead><tr>
+            <th>FERC account</th><th class="num op">Opening (prior FY)</th><th class="num op">+ Activity</th><th class="num op">= Closing</th><th class="num">Evidence</th><th class="num">Tie</th><th>Status</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="cf">
+        <div class="h"><b>Carry-forward</b><span>— on close, each account's FY 2026 closing seeds its FY 2027 opening</span><div style="flex:1"></div>
+          <button class="btn" id="cfBtn" onclick="carryForward()"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>Carry forward to FY 2027</button></div>
+        <div id="cflist"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/ferc.js?v=1.9.0"></script>
+<script src="assets/app.js?v=1.9.0"></script>
+<script>
+  renderSidebar('periods');
+  const s = rollforwardSummary();
+  document.getElementById('tol').textContent = money(s.tol);
+  const kd=[
+    {lab:'Accounts in roll-forward', num:s.count, cls:'', bg:'var(--slatebg)', stroke:'#5A6385', icon:'<path d="M3 3v18h18M8 16l3.5-4 3 2.5L20 8"/>', foot:RECON.fiscalYear},
+    {lab:'Continuity tied', num:s.tied, cls:'g', bg:'var(--greenbg)', stroke:'#11A150', icon:'<path d="M20 6 9 17l-5-5"/>', foot:'opening+activity ties to evidence'},
+    {lab:'True-ups needed', num:s.variance, cls:'a', bg:'var(--amberbg)', stroke:'#C9790B', icon:'<path d="M12 9v4m0 4h.01M10.3 4.3 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z"/>', foot:'closing vs evidence', footcls:'a'},
+    {lab:'Net closing', num:money(s.closing), cls:'', bg:'#EEF1F8', stroke:'#5A6385', icon:'<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>', foot:'rolls to FY 2027 opening', small:true},
+  ];
+  document.getElementById('kpis').innerHTML = kd.map(d=>`
+    <div class="kpi" style="cursor:default"><div class="lab">${d.lab}</div>
+      <div class="row"><div class="num ${d.cls}" ${d.small?'style="font-size:21px"':''}>${d.num}</div><div class="chip" style="background:${d.bg}"><svg viewBox="0 0 24 24" stroke="${d.stroke}" fill="none">${d.icon}</svg></div></div>
+      <div class="foot ${d.footcls||''}">${d.foot}</div></div>`).join('');
+
+  const tied = r => Math.abs(r.tie)<=s.tol;
+  document.getElementById('tbody').innerHTML = RECON.rollforward.map(r=>{
+    const c = fercClassify(r.code);
+    return `<tr ${tied(r)?'':'style="background:#FFFBF4"'}>
+      <td class="acct"><b>${r.code} · ${r.name}</b><span>${c.project}</span></td>
+      <td class="num opcol">${money(r.opening)}</td>
+      <td class="num plus">${money(r.activity)}</td>
+      <td class="num eq">${money(r.closing)}</td>
+      <td class="num">${money(r.evidence)}</td>
+      <td class="num${tied(r)?'':' var-pos'}">${money(r.tie)}</td>
+      <td>${tied(r)?'<span class="tag t-ok">Tied</span>':'<span class="tag t-var">True-up</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  function carryForward(){
+    document.getElementById('cfBtn').outerHTML = '<span style="font-size:13px;font-weight:600;color:var(--green)">✓ Carried forward by '+RECON.currentUser+'</span>';
+    document.getElementById('cflist').innerHTML = RECON.rollforward.map(r=>`
+      <div class="cfrow"><div style="flex:1"><b>${r.code}</b> · ${r.name}</div>
+        <span class="c">${money(r.closing)}</span><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg><span class="c">${money(r.closing)}</span>
+        <span style="font-size:12px;color:var(--muted);min-width:120px">FY27 opening</span></div>`).join('');
+  }
+  window.carryForward = carryForward;
+</script>
+</body>
+</html>

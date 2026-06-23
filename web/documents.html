@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocVault — document repository</title>
+<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+<style>
+  .dchip{margin:8px 8px 2px;font-size:10px;letter-spacing:.4px;color:#7D86AE;background:#191F47;border-radius:8px;padding:7px 10px;line-height:1.4}
+  .dtop{background:#fff;border-bottom:1px solid var(--line);padding:16px 32px;display:flex;align-items:center;gap:14px}
+  .search{flex:1;max-width:520px;display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:10px;padding:9px 13px}
+  .search svg{width:17px;height:17px;stroke:var(--muted);fill:none;stroke-width:1.9}
+  .search input{border:none;outline:none;font:inherit;font-size:14px;width:100%;background:transparent}
+  .facets{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+  .facet{font-size:12.5px;font-weight:600;color:var(--muted);background:#fff;border:1px solid var(--line);padding:8px 13px;border-radius:20px;cursor:pointer}
+  .facet.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .facet i{font-style:normal;opacity:.7;margin-left:5px}
+  .docgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+  .doccard{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);cursor:pointer;transition:transform .12s,box-shadow .12s;text-decoration:none;color:inherit;display:block}
+  .doccard:hover{transform:translateY(-3px);box-shadow:0 12px 26px -14px rgba(20,26,51,.34)}
+  .thumb{height:128px;background:#F4F6FB;border-bottom:1px solid var(--line);padding:14px;position:relative;overflow:hidden}
+  .thumb .pg{background:#fff;border:1px solid var(--line);border-radius:4px;height:100%;padding:9px 10px}
+  .thumb .pg .br{height:6px;width:46%;border-radius:3px;background:var(--grad);margin-bottom:8px}
+  .thumb .pg .ln{height:5px;border-radius:3px;background:#E7EAF3;margin-bottom:5px}
+  .thumb .bal{position:absolute;right:18px;bottom:16px;font-size:13px;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums;background:#fff;border:1px solid var(--line);border-radius:6px;padding:3px 7px}
+  .dcbody{padding:13px 15px}
+  .dcbody b{font-size:13.5px;font-weight:700;display:block;line-height:1.3}
+  .dcbody .sub{font-size:12px;color:var(--muted);margin-top:4px}
+  .dtags{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+  .dtag{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:11px;background:var(--slatebg);color:var(--slate)}
+  .dtag.b{background:#E6F1FB;color:#185FA5}
+  .dtag.s{background:var(--amberbg);color:var(--amber)}
+  /* viewer */
+  .vback{display:inline-flex;align-items:center;gap:7px;color:var(--muted);text-decoration:none;font-size:13.5px;font-weight:600;margin-bottom:16px}
+  .vback svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2}
+  .viewer{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start}
+  .sheetwrap{background:#E9ECF5;border:1px solid var(--line);border-radius:14px;padding:26px;display:flex;justify-content:center}
+  .sheet{background:#fff;width:100%;max-width:560px;box-shadow:0 8px 30px -10px rgba(20,26,51,.35);padding:34px 36px;font-size:13px;color:#1c2340}
+  .sheet .sh-top{display:flex;align-items:flex-start;gap:12px;border-bottom:2px solid var(--ink);padding-bottom:14px}
+  .sheet .sh-bank{font-size:21px;font-weight:800;letter-spacing:-.4px}
+  .sheet .sh-kind{font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);font-weight:700;margin-top:2px}
+  .sheet .sh-logo{margin-left:auto;width:42px;height:42px;border-radius:9px;background:var(--grad)}
+  .sheet .sh-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;margin:16px 0;font-size:12.5px}
+  .sheet .sh-grid .k{color:var(--muted)}
+  .sheet .sh-grid .v{font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+  .sheet .sumbox{border:1px solid var(--line);border-radius:9px;margin-top:6px}
+  .sheet .sumbox div{display:flex;justify-content:space-between;padding:9px 13px;font-size:12.5px;border-top:1px solid var(--line)}
+  .sheet .sumbox div:first-child{border-top:none}
+  .sheet .sumbox .tot{font-weight:800;font-size:14px;background:#FAFBFE}
+  .sheet table{width:100%;border-collapse:collapse;margin-top:16px}
+  .sheet th{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-align:left;padding:6px 0;border-bottom:1px solid var(--ink)}
+  .sheet th.n,.sheet td.n{text-align:right;font-variant-numeric:tabular-nums}
+  .sheet td{padding:8px 0;border-bottom:1px solid #EEF1F8;font-size:12px}
+  .sheet .foot{margin-top:18px;font-size:10.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px}
+  .mp{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .mp .mph{padding:15px 18px;border-bottom:1px solid var(--line);font-size:14px;font-weight:700}
+  .mp .kv{padding:6px 18px 14px}
+  .mp .kv div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;font-size:13px;border-bottom:1px solid #F2F4FA}
+  .mp .kv div .k{color:var(--muted)}
+  .mp .kv div .v{font-weight:600;text-align:right}
+  .mp .ocr{padding:0 18px 16px}
+  .mp .ocr .lab{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;margin:10px 0 7px}
+  .mp .ocr pre{background:#0E1330;color:#C9D0EE;border-radius:9px;padding:12px 13px;font-family:var(--font-mono,ui-monospace,Menlo,monospace);font-size:11.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+  .mp .acts{padding:0 18px 18px;display:flex;flex-direction:column;gap:9px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side"></aside>
+  <div class="main">
+    <header class="dtop">
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input id="q" placeholder="Search documents, correspondents, tags…"></div>
+      <div class="sp" style="flex:1"></div>
+      <span id="count" style="font-size:13px;color:var(--muted);font-weight:600"></span>
+      <div class="av2">JB</div>
+    </header>
+    <div class="body" id="dms"></div>
+  </div>
+</div>
+<script src="assets/app.js?v=1.9.0"></script>
+<script>
+  const DOCS = buildDocuments();
+  const params = new URLSearchParams(location.search);
+
+  document.getElementById('side').innerHTML = `
+    <a class="brand" href="documents.html"><div class="mark" style="background:var(--grad)">D</div><div><div class="nm">DocVault</div><div class="sub">DOCUMENT REPOSITORY</div></div></a>
+    <div class="dchip">Stands in for Paperless-ngx / Laserfiche — the document layer of the reconciliation pipeline.</div>
+    <nav class="nav" style="margin-top:10px">
+      <a href="documents.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/></svg>Inbox</a>
+      <a class="on" href="documents.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 3v5h5M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-5Z"/></svg>All documents<span class="badge">${DOCS.length}</span></a>
+      <a href="documents.html?type=statement"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 3v18h18M8 16l3.5-4 3 2.5L20 8"/></svg>Bank statements</a>
+      <a href="documents.html?type=support"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M20 6 9 17l-5-5"/></svg>Supporting docs</a>
+      <div class="navsep"></div>
+      <a href="workspace.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>Back to OpenRecon</a>
+    </nav>
+    <div class="who"><div class="av">JB</div><div><div class="nm">Joe B.</div><div class="rl">Senior preparer</div></div></div>`;
+
+  const isBank = d => d.grp === 'Cash & equivalents' && d.kind === 'statement';
+  const typeLabel = d => d.kind==='support' ? 'Supporting document' : (isBank(d) ? 'Bank statement' : 'Account statement');
+
+  function renderList(){
+    const filt = params.get('type');
+    const list = filt ? DOCS.filter(d=>d.kind===filt) : DOCS;
+    document.getElementById('count').textContent = `${list.length} document${list.length!==1?'s':''}`;
+    const facet=(key,label)=>{const n=key?DOCS.filter(d=>d.kind===key).length:DOCS.length;return `<a class="facet ${((!filt&&!key)||filt===key)?'on':''}" href="documents.html${key?'?type='+key:''}" style="text-decoration:none">${label}<i>${n}</i></a>`;};
+    const cards = list.map(d=>{
+      const val = d.kind==='support' ? money(d.amount) : money(d.balance);
+      const tcls = d.kind==='support'?'s':(isBank(d)?'b':'');
+      return `<a class="doccard" href="documents.html?doc=${d.id}">
+        <div class="thumb"><div class="pg"><div class="br"></div><div class="ln" style="width:86%"></div><div class="ln" style="width:64%"></div><div class="ln" style="width:74%"></div><div class="ln" style="width:40%"></div></div><div class="bal">${val}</div></div>
+        <div class="dcbody"><b>${d.title}</b><div class="sub">${d.correspondent} · ${d.created} · ASN ${d.asn}</div>
+        <div class="dtags">${d.tags.map(t=>`<span class="dtag ${tcls}">${t}</span>`).join('')}</div></div>
+      </a>`;
+    }).join('');
+    document.getElementById('dms').innerHTML = `
+      <div class="facets">${facet(null,'All')}${facet('statement','Bank statements')}${facet('support','Supporting docs')}</div>
+      <div class="docgrid">${cards}</div>`;
+    const q=document.getElementById('q');
+    q.oninput=()=>{const s=q.value.toLowerCase();[...document.querySelectorAll('.doccard')].forEach((c,i)=>{c.style.display=(c.textContent.toLowerCase().includes(s))?'':'none';});};
+  }
+
+  function fmt(n){return money(n);}
+  function statementSheet(d){
+    const closing=d.balance;
+    let txnRows='', summary='';
+    if(isBank(d)){
+      const txns=[
+        {dt:'05/03/2026', ds:'ACH credit — customer deposit', amt:+Math.round(Math.abs(closing)*0.082*100)/100},
+        {dt:'05/12/2026', ds:'Wire out — vendor payment', amt:-Math.round(Math.abs(closing)*0.054*100)/100},
+        {dt:'05/22/2026', ds:'ACH credit — customer deposit', amt:+Math.round(Math.abs(closing)*0.061*100)/100},
+        {dt:'05/31/2026', ds:'Account analysis fee', amt:-120.00}
+      ];
+      const net=txns.reduce((s,t)=>s+t.amt,0);
+      const opening=Math.round((closing-net)*100)/100;
+      const credits=txns.filter(t=>t.amt>0).reduce((s,t)=>s+t.amt,0);
+      const debits=txns.filter(t=>t.amt<0).reduce((s,t)=>s+t.amt,0);
+      let run=opening;
+      txnRows=txns.map(t=>{run=Math.round((run+t.amt)*100)/100;return `<tr><td>${t.dt}</td><td>${t.ds}</td><td class="n">${(t.amt<0?'-$':'$')+Math.abs(t.amt).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td class="n">${fmt(run)}</td></tr>`;}).join('');
+      summary=`<div class="sumbox">
+        <div><span>Opening balance</span><span>${fmt(opening)}</span></div>
+        <div><span>Total credits</span><span>${fmt(credits)}</span></div>
+        <div><span>Total debits</span><span>${fmt(debits)}</span></div>
+        <div class="tot"><span>Closing balance</span><span>${fmt(closing)}</span></div></div>`;
+      return `${summary}
+        <table><thead><tr><th>Date</th><th>Description</th><th class="n">Amount</th><th class="n">Balance</th></tr></thead><tbody>${txnRows}</tbody></table>`;
+    }
+    return `<div class="sumbox">
+      <div><span>Source system</span><span>${d.correspondent}</span></div>
+      <div><span>As of</span><span>${d.ocr_date||'2026-05-31'}</span></div>
+      <div class="tot"><span>Ending balance</span><span>${fmt(closing)}</span></div></div>
+      <p style="margin-top:14px;font-size:12px;color:var(--muted)">Per sub-ledger detail for ${d.acctName} (${d.acctMask}). Full transaction listing retained in the source system.</p>`;
+  }
+  function wireSheet(d){
+    return `<div class="sh-grid">
+        <span class="k">Confirmation #</span><span class="v">88${d.acctId}-WC</span>
+        <span class="k">Value date</span><span class="v">${d.created}</span>
+        <span class="k">Status</span><span class="v" style="color:var(--green)">Completed</span>
+        <span class="k">Originator</span><span class="v">Joe Blow Industries, Inc.</span>
+        <span class="k">Beneficiary</span><span class="v">${d.acctName.split('—')[0].trim()}</span>
+      </div>
+      <div class="sumbox"><div class="tot"><span>Wire amount</span><span>${fmt(d.amount)}</span></div></div>
+      <p style="margin-top:14px;font-size:12px;color:var(--muted)">Treasury wire confirmation attached as supporting evidence for the variance on ${d.acctName}.</p>`;
+  }
+
+  function renderViewer(d){
+    document.getElementById('count').textContent = 'ASN ' + d.asn;
+    const bank = isBank(d);
+    const sheetBody = d.kind==='support' ? wireSheet(d) : statementSheet(d);
+    const header = d.kind==='support'
+      ? {bank:'Treasury operations', kind:'Wire transfer confirmation'}
+      : {bank:d.correspondent, kind: bank?'Statement of account':'Account statement'};
+    const sheetHead = d.kind==='support' ? '' : `<div class="sh-grid">
+        <span class="k">Account holder</span><span class="v">Joe Blow Industries, Inc.</span>
+        <span class="k">Account number</span><span class="v">${d.acctMask}</span>
+        <span class="k">Statement period</span><span class="v">May 1–31, 2026</span>
+        <span class="k">Statement date</span><span class="v">${d.ocr_date||'2026-05-31'}</span>
+      </div>`;
+    const ocrText = d.kind==='support'
+      ? `WIRE CONFIRMATION\nAmount: ${fmt(d.amount)}\nStatus: COMPLETED\nValue date: ${d.created}`
+      : `${(d.correspondent||'').toUpperCase()}\nACCOUNT ${d.ocr_acct||d.acctMask}\nSTATEMENT DATE ${d.ocr_date||'2026-05-31'}\nCLOSING BALANCE ${fmt(d.balance)}`;
+
+    document.getElementById('dms').innerHTML = `
+      <a class="vback" href="documents.html"><svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>All documents</a>
+      <div class="viewer">
+        <div class="sheetwrap"><div class="sheet">
+          <div class="sh-top"><div><div class="sh-bank">${header.bank}</div><div class="sh-kind">${header.kind}</div></div><div class="sh-logo"></div></div>
+          ${sheetHead}${sheetBody}
+          <div class="foot">Captured and OCR'd on ingestion · ASN ${d.asn} · page 1 of ${d.pages} · stands in for a Paperless-ngx / Laserfiche scan.</div>
+        </div></div>
+        <div>
+          <div class="mp">
+            <div class="mph">${d.title}</div>
+            <div class="kv">
+              <div><span class="k">Document type</span><span class="v">${typeLabel(d)}</span></div>
+              <div><span class="k">Correspondent</span><span class="v">${d.correspondent}</span></div>
+              <div><span class="k">Created</span><span class="v">${d.created}</span></div>
+              <div><span class="k">ASN</span><span class="v">${d.asn}</span></div>
+              <div><span class="k">Account</span><span class="v">${d.acctName.split('—')[0].trim()}</span></div>
+            </div>
+            <div class="ocr"><div class="lab">OCR content</div><pre>${ocrText}</pre></div>
+            <div class="acts">
+              <a class="btn" href="account.html?id=${d.acctId}"><svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>Open reconciliation</a>
+              <button class="btn ghost" onclick="alert('Demo — the source PDF would download here.')"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Download original</button>
+            </div>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">${d.tags.map(t=>`<span class="dtag ${d.kind==='support'?'s':(bank?'b':'')}">${t}</span>`).join('')}</div>
+        </div>
+      </div>`;
+  }
+
+  const docId = params.get('doc');
+  if(docId){
+    const d = DOCS.find(x=>x.id===docId);
+    if(d) renderViewer(d); else renderList();
+  } else {
+    renderList();
+  }
+</script>
+</body>
+</html>

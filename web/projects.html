@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRecon — Project reconciliations</title>
+<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+<style>
+  .func{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#185FA5;background:#E6F1FB;border-radius:14px;padding:3px 9px}
+  .func.cap{color:#185FA5;background:#E6F1FB} .func.om{color:#0F6E56;background:#E1F5EE}
+  .acctpill{font-size:12px;font-weight:700;color:var(--slate);background:var(--slatebg);border-radius:12px;padding:3px 9px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side"></aside>
+  <div class="main">
+    <header class="top">
+      <div><h1>Project reconciliations</h1><div class="crumb">One supporting document settles the many FERC accounts an expense touches · May 2026 close</div></div>
+      <div class="sp"></div>
+      <a class="pill" href="how-it-works.html"><svg viewBox="0 0 24 24"><path d="M12 16v-4m0-4h.01"/><circle cx="12" cy="12" r="9"/></svg>How project recs work</a>
+      <div class="av2">JB</div>
+    </header>
+    <div class="body">
+      <div class="kpis" id="kpis"></div>
+      <div class="panel">
+        <div class="ph"><b>Projects under settlement</b></div>
+        <table>
+          <thead><tr>
+            <th>Project</th><th>FERC function</th><th class="num">Accounts</th><th class="num">Source expense</th><th class="num">Allocated</th><th class="num">Tie-out</th><th>Status</th><th>Work</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/ferc.js?v=1.9.0"></script>
+<script src="assets/app.js?v=1.9.0"></script>
+<script>
+  renderSidebar('projects');
+  const k = projectKpis();
+  const kdefs = [
+    {lab:'Project reconciliations', num:k.count, cls:'', bg:'var(--slatebg)', stroke:'#5A6385', icon:'<path d="M3 7l9-4 9 4-9 4-9-4Z"/><path d="M3 12l9 4 9-4"/>', foot:`${k.accounts} accounts grouped`},
+    {lab:'Under settlement', num:money(k.total), cls:'', bg:'#EEF1F8', stroke:'#5A6385', icon:'<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>', foot:'total source expense', small:true},
+    {lab:'Tied out', num:k.tied, cls:'g', bg:'var(--greenbg)', stroke:'#11A150', icon:'<path d="M20 6 9 17l-5-5"/>', foot:'allocations match source'},
+    {lab:'Variance', num:k.variance, cls:'a', bg:'var(--amberbg)', stroke:'#C9790B', icon:'<path d="M12 9v4m0 4h.01M10.3 4.3 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z"/>', foot:'lines don’t tie yet', footcls:'a'},
+  ];
+  document.getElementById('kpis').innerHTML = kdefs.map(d=>`
+    <div class="kpi" style="cursor:default">
+      <div class="lab">${d.lab}</div>
+      <div class="row"><div class="num ${d.cls}" ${d.small?'style="font-size:24px"':''}>${d.num}</div><div class="chip" style="background:${d.bg}"><svg viewBox="0 0 24 24" stroke="${d.stroke}" fill="none">${d.icon}</svg></div></div>
+      <div class="foot ${d.footcls||''}">${d.foot}</div>
+    </div>`).join('');
+
+  const tag = s => s==='tied' ? '<span class="tag t-ok">Tied out</span>' : '<span class="tag t-var">Variance</span>';
+  const workPill = w => `<span class="ws ${w}">${WORK_LABELS[w]}</span>`;
+  document.getElementById('tbody').innerHTML = RECON.projects.map(p=>{
+    const s = projectSummary(p);
+    const f0 = s.functions[0] || '—';
+    const fcls = (fercClassify(p.lines[0].code).expense_type==='Capital') ? 'cap' : 'om';
+    const fmore = s.functions.length>1 ? ` <span class="muted" style="font-weight:600">+${s.functions.length-1}</span>` : '';
+    return `<tr class="acctrow" onclick="location.href='project.html?id=${p.id}'">
+      <td class="acct"><b>${p.name}</b><span>${p.wo} · ${p.source.vendor} · ${p.assigned}</span></td>
+      <td><span class="func ${fcls}">${f0}</span>${fmore}</td>
+      <td class="num"><span class="acctpill">${s.accounts}</span></td>
+      <td class="num">${money(p.source.amount)}</td>
+      <td class="num">${money(s.allocated)}</td>
+      <td class="num${s.status==='variance'?' var-pos':''}">${money(s.variance)}</td>
+      <td>${tag(s.status)}</td>
+      <td>${workPill(p.work)}</td>
+    </tr>`;
+  }).join('');
+</script>
+</body>
+</html>

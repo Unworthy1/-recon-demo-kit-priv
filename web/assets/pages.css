@@ -1,0 +1,122 @@
+/* OpenRecon showcase — landing, how-it-works, dashboard */
+
+/* ===== landing ===== */
+.lp{max-width:1080px;margin:0 auto;padding:0 26px}
+.lphead{display:flex;align-items:center;gap:12px;padding:22px 0}
+.lphead .mark{width:38px;height:38px}
+.lphead .nm{font-weight:800;font-size:19px;letter-spacing:-.4px}
+.lphead .sp{flex:1}
+.lphead a.navlink{color:var(--muted);text-decoration:none;font-size:14px;font-weight:600;margin-left:22px}
+.lphead a.navlink:hover{color:var(--text)}
+.hero{padding:54px 0 30px;text-align:center}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--pink);background:#FFF0F5;border:1px solid #FAD7E5;padding:7px 14px;border-radius:20px}
+.hero h1{font-size:50px;line-height:1.05;font-weight:800;letter-spacing:-1.6px;margin:22px auto 0;max-width:760px}
+.hero h1 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.hero p.sub{font-size:18.5px;line-height:1.6;color:var(--muted);max-width:640px;margin:20px auto 0;font-weight:500}
+.cta{display:flex;gap:13px;justify-content:center;margin-top:30px;flex-wrap:wrap}
+.btn.lg{padding:14px 24px;font-size:15px;border-radius:12px}
+.statband{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden;margin:46px 0 8px;box-shadow:var(--shadow)}
+.statband .s{background:#fff;padding:24px 20px;text-align:center}
+.statband .s .v{font-size:32px;font-weight:800;letter-spacing:-1px;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.statband .s .l{font-size:12.5px;color:var(--muted);font-weight:600;margin-top:6px}
+.section{padding:54px 0}
+.section .lead{text-align:center;max-width:620px;margin:0 auto 36px}
+.section .lead h2{font-size:30px;font-weight:800;letter-spacing:-.8px}
+.section .lead p{font-size:16px;color:var(--muted);margin-top:12px;line-height:1.6}
+.feat{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.fcard{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px 22px;box-shadow:var(--shadow)}
+.fcard .fi{width:46px;height:46px;border-radius:13px;background:var(--slatebg);display:flex;align-items:center;justify-content:center;margin-bottom:16px}
+.fcard .fi svg{width:23px;height:23px;stroke:var(--purple);fill:none;stroke-width:1.8}
+.fcard h3{font-size:17px;font-weight:700;letter-spacing:-.3px}
+.fcard p{font-size:14px;color:var(--muted);line-height:1.6;margin-top:8px}
+.lpfoot{border-top:1px solid var(--line);padding:30px 0 60px;text-align:center;color:var(--muted);font-size:13px}
+
+/* ===== pipeline (how it works) ===== */
+.flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+.step{flex:1;min-width:150px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px 18px;box-shadow:var(--shadow);position:relative;opacity:0;transform:translateY(10px);transition:opacity .5s,transform .5s}
+.step.in{opacity:1;transform:none}
+.step .n{width:30px;height:30px;border-radius:9px;background:var(--grad);color:#fff;font-weight:800;font-size:14px;display:flex;align-items:center;justify-content:center;margin-bottom:13px}
+.step h3{font-size:15.5px;font-weight:700;letter-spacing:-.2px}
+.step .svc{font-size:11.5px;font-weight:700;color:var(--purple);margin-top:3px}
+.step p{font-size:13px;color:var(--muted);line-height:1.55;margin-top:9px}
+.arrow{flex:0 0 34px;display:flex;align-items:center;justify-content:center;color:#C5CBE0}
+.arrow svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2}
+.maptbl{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}
+.maptbl th{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);font-weight:700;text-align:left;padding:14px 20px;background:#FAFBFE}
+.maptbl td{padding:15px 20px;border-top:1px solid var(--line);font-size:14px}
+.maptbl td b{font-weight:700}
+.maptbl td.ent{color:var(--purple);font-weight:700}
+
+/* ===== dashboard ===== */
+.dgrid{display:grid;grid-template-columns:2fr 1fr;gap:18px;margin-top:18px}
+.dcard{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px 22px;box-shadow:var(--shadow)}
+.dcard h3{font-size:15px;font-weight:700;display:flex;align-items:center;gap:10px}
+.dcard h3 .hint{margin-left:auto;font-size:12px;color:var(--muted);font-weight:600}
+.lead-row{display:flex;align-items:center;gap:13px;padding:13px 0;border-top:1px solid var(--line)}
+.lead-row:first-of-type{border-top:none}
+.lead-row .av{width:36px;height:36px;border-radius:50%;background:var(--slatebg);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:var(--slate)}
+.lead-row .nm{font-size:14px;font-weight:600}
+.lead-row .rl{font-size:12px;color:var(--muted)}
+.lead-row .mtr{flex:1;height:9px;border-radius:6px;background:#EEF1F8;overflow:hidden;max-width:200px}
+.lead-row .mtr i{display:block;height:100%;background:var(--grad);border-radius:6px;transition:width .9s cubic-bezier(.22,1,.36,1)}
+.lead-row .ct{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;min-width:74px;text-align:right}
+.donut{width:172px;height:172px;border-radius:50%;margin:6px auto 14px;display:flex;align-items:center;justify-content:center;position:relative}
+.donut::after{content:"";position:absolute;width:108px;height:108px;border-radius:50%;background:#fff}
+.donut .dc{position:relative;z-index:1;text-align:center}
+.donut .dc b{font-size:30px;font-weight:800;letter-spacing:-1px;display:block}
+.donut .dc span{font-size:11.5px;color:var(--muted);font-weight:600}
+.legend{display:flex;flex-direction:column;gap:9px}
+.legend .lg{display:flex;align-items:center;gap:9px;font-size:13px}
+.legend .lg .sw{width:11px;height:11px;border-radius:3px}
+.legend .lg .lv{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums}
+.barsvg{width:100%}
+.barsvg .track{fill:#EEF1F8}
+.barsvg .fillb{fill:var(--purple)}
+.barsvg .lbl{font-size:12px;fill:var(--muted);font-weight:600}
+.barsvg .val{font-size:12px;fill:var(--text);font-weight:700}
+.agewrap{display:flex;flex-direction:column;gap:0}
+.agerow{display:flex;align-items:center;gap:14px;padding:13px 0;border-top:1px solid var(--line);font-size:14px}
+.agerow:first-child{border-top:none}
+.agerow .lab{width:120px;color:var(--muted);font-weight:600}
+.agerow .track{flex:1;height:24px;border-radius:7px;background:#F4F6FB;overflow:hidden;position:relative}
+.agerow .track i{display:block;height:100%;border-radius:7px;transition:width .9s cubic-bezier(.22,1,.36,1)}
+.agerow .ct{width:40px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+
+/* ============================ mobile / responsive ============================ */
+@media (max-width:860px){
+  .lp{padding:0 16px}
+  .lphead{flex-wrap:wrap;gap:8px;padding:16px 0}
+  .lphead .sp{flex-basis:100%;height:0}
+  .lphead a.navlink{margin-left:0;margin-right:18px;font-size:13.5px}
+
+  .hero{padding:30px 0 18px}
+  .hero h1{font-size:32px;letter-spacing:-1px;margin-top:18px}
+  .hero p.sub{font-size:16px;margin-top:16px}
+  .cta{margin-top:24px}
+  .btn.lg{padding:13px 20px;font-size:14.5px}
+
+  .statband{grid-template-columns:repeat(2,1fr);margin:30px 0 8px}
+  .statband .s{padding:18px 14px}
+  .statband .s .v{font-size:26px}
+
+  .section{padding:36px 0}
+  .section .lead{margin-bottom:26px}
+  .section .lead h2{font-size:24px}
+  .feat{grid-template-columns:1fr;gap:14px}
+
+  /* pipeline: stack the steps full-width, drop the connector arrows */
+  .flow{flex-direction:column}
+  .step{min-width:100%}
+  .arrow{display:none}
+  .maptbl{display:block;overflow-x:auto;white-space:nowrap}
+  .maptbl th,.maptbl td{padding:12px 16px;font-size:13px}
+
+  /* director dashboard: stack the 2-col grid (also beats the inline style override) */
+  .dgrid{grid-template-columns:1fr !important}
+  .lead-row .mtr{max-width:none}
+}
+
+@media (max-width:440px){
+  .hero h1{font-size:27px}
+  .statband{grid-template-columns:1fr 1fr}
+}

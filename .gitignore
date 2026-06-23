@@ -1,0 +1,13 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# runtime / build
+node_modules/
+*.log
+*.bak
+*.bak-*

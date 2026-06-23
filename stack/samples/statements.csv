@@ -1,0 +1,5 @@
+source_account,balance,as_of,statement_date,bank_name,document_ref
+bank_4471,2840114.22,2026-05-31,2026-05-31,Wells Fargo,STMT-1010
+bank_8810,483220.00,2026-05-31,2026-05-31,JPMorgan Chase,STMT-1020
+ar_dom,1894220.10,2026-05-31,2026-05-31,AR aging,STMT-1210
+ap_dom,-934118.00,2026-05-31,2026-05-31,AP aging,STMT-2010

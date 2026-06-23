@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRecon — Year-end close</title>
+<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+<style>
+  .pcat{font-size:12px;letter-spacing:.5px;text-transform:uppercase;color:var(--slate);font-weight:700;margin:22px 0 12px}
+  .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+  .pcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow)}
+  .pcard.annual{grid-column:1/-1;border:2px solid var(--pink)}
+  .pcard .ph{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .pcard .nm{font-size:15px;font-weight:700}
+  .pcard .ty{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:700}
+  .pcard .ft{font-size:12.5px;color:var(--muted);margin-top:10px}
+  .lockt{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:5px 11px;border-radius:16px}
+  .lockt.locked{background:var(--slatebg);color:var(--slate)} .lockt.open{background:var(--greenbg);color:var(--green)}
+  .bar{height:8px;border-radius:6px;background:#EEF1F8;margin-top:12px;overflow:hidden}.bar i{display:block;height:100%;background:var(--grad)}
+  .lockbtn{margin-top:13px;font-size:12.5px;font-weight:700;border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 13px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;color:var(--text)}
+  .lockbtn svg{width:15px;height:15px;stroke:var(--muted);fill:none;stroke-width:2}
+  .annx{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side"></aside>
+  <div class="main">
+    <header class="top">
+      <div><h1>Year-end close</h1><div class="crumb" id="crumb"></div></div>
+    </header>
+    <div class="body">
+      <div class="kpis" id="kpis"></div>
+      <div id="cats"></div>
+    </div>
+  </div>
+</div>
+<script src="assets/app.js?v=1.9.0"></script>
+<script>
+  renderSidebar('periods');
+  const k = periodKpis();
+  document.getElementById('crumb').textContent = RECON.fiscalYear + ' · monthly · quarterly · annual — locked periods are closed and read-only';
+  const kd=[
+    {lab:'Close periods', num:k.total, cls:'', bg:'var(--slatebg)', stroke:'#5A6385', icon:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>', foot:RECON.fiscalYear},
+    {lab:'Locked (closed)', num:k.locked, cls:'', bg:'var(--slatebg)', stroke:'#5A6385', icon:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>', foot:'read-only'},
+    {lab:'Open', num:k.open, cls:'g', bg:'var(--greenbg)', stroke:'#11A150', icon:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.9-1"/>', foot:'in progress'},
+    {lab:'Annual close', num:k.annual.progress+'%', cls:'a', bg:'var(--amberbg)', stroke:'#C9790B', icon:'<path d="M3 3v18h18M7 14l3-3 3 2 5-6"/>', foot:'FY 2026 roll-forward', footcls:'a'},
+  ];
+  document.getElementById('kpis').innerHTML = kd.map(d=>`
+    <div class="kpi" style="cursor:default"><div class="lab">${d.lab}</div>
+      <div class="row"><div class="num ${d.cls}">${d.num}</div><div class="chip" style="background:${d.bg}"><svg viewBox="0 0 24 24" stroke="${d.stroke}" fill="none">${d.icon}</svg></div></div>
+      <div class="foot ${d.footcls||''}">${d.foot}</div></div>`).join('');
+
+  const lockTag = p => p.status==='locked'
+    ? `<span class="lockt locked"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Locked</span>`
+    : `<span class="lockt open">Open</span>`;
+  const footer = p => p.status==='locked' ? `Closed by ${p.closed_by} · ${p.closed}` : `In progress · ${p.progress}%`;
+  const card = p => `<div class="pcard${p.type==='annual'?' annual':''}" id="card-${p.key}">
+      <div class="ph"><div><div class="nm">${p.label}</div><div class="ty">${p.type}</div></div>${lockTag(p)}</div>
+      ${p.status==='open'?`<div class="bar"><i style="width:${p.progress}%"></i></div>`:''}
+      <div class="ft">${footer(p)}</div>
+      ${p.type==='annual'
+        ? `<div class="annx"><a class="btn" href="yearend.html"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l3-3 3 2 5-6"/></svg>Open roll-forward</a>${p.status==='open'?`<button class="lockbtn" onclick="lock('${p.key}')"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Lock FY 2026</button>`:''}</div>`
+        : (p.status==='open'?`<button class="lockbtn" onclick="lock('${p.key}')"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Lock period</button>`:'')}
+    </div>`;
+  const cat = (title, ps) => `<div class="pcat">${title}</div><div class="pgrid">${ps.map(card).join('')}</div>`;
+  document.getElementById('cats').innerHTML =
+    cat('Monthly', RECON.periods.filter(p=>p.type==='monthly')) +
+    cat('Quarterly', RECON.periods.filter(p=>p.type==='quarterly')) +
+    cat('Annual', RECON.periods.filter(p=>p.type==='annual'));
+
+  function lock(key){
+    const p = RECON.periods.find(x=>x.key===key); p.status='locked'; p.closed_by=RECON.currentUser; p.closed='just now';
+    const el=document.getElementById('card-'+key);
+    el.outerHTML = card(p);
+  }
+  window.lock = lock;
+</script>
+</body>
+</html>

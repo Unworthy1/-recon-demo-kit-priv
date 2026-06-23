@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRecon — how it works</title>
+<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+<link rel="stylesheet" href="assets/pages.css?v=1.9.0">
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side"></aside>
+  <div class="main">
+    <header class="top">
+      <div><h1>How it works</h1><div class="crumb">From statement drop to a signed-off reconciliation</div></div>
+    </header>
+    <div class="body">
+
+      <div class="prog" style="margin-top:0">
+        <div class="h"><b>The pipeline</b><span>each statement flows left → right, untouched by hand</span></div>
+        <div class="flow" id="flow" style="margin-top:16px">
+          <div class="step"><div class="n">1</div><h3>Drop</h3><div class="svc">Watched folder · email · upload</div><p>A bank statement PDF arrives — emailed to a monitored mailbox, dropped in a folder, or uploaded from the overview.</p></div>
+          <div class="arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+          <div class="step"><div class="n">2</div><h3>OCR &amp; extract</h3><div class="svc">Paperless-ngx</div><p>Paperless OCRs the document and a post-consume hook extracts the balance, account number, and statement date.</p></div>
+          <div class="arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+          <div class="step"><div class="n">3</div><h3>Match</h3><div class="svc">n8n workflow</div><p>A workflow pulls the GL balance for that account, compares it to the statement within tolerance, and computes the variance.</p></div>
+          <div class="arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+          <div class="step"><div class="n">4</div><h3>Record</h3><div class="svc">Reconciliation DB</div><p>The verdict — reconciled, variance, or unmatched — is written back with the OCR evidence and a document link.</p></div>
+          <div class="arrow"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+          <div class="step"><div class="n">5</div><h3>Review</h3><div class="svc">Workspace</div><p>Exceptions surface on the board for a preparer to resolve, an approver to sign off, and a director to oversee.</p></div>
+        </div>
+      </div>
+
+      <div class="section" style="padding:34px 0 6px">
+        <div class="lead" style="margin-bottom:22px">
+          <h2>Demo stack → enterprise stack</h2>
+          <p>The architecture is the point — the components are swappable. The demo runs entirely on open-source stand-ins for what an enterprise already owns.</p>
+        </div>
+        <table class="maptbl">
+          <thead><tr><th>Layer</th><th>This demo</th><th>Enterprise equivalent</th></tr></thead>
+          <tbody>
+            <tr><td><b>Document capture &amp; OCR</b></td><td>Paperless-ngx</td><td class="ent">Laserfiche</td></tr>
+            <tr><td><b>General ledger</b></td><td>Mock GL (Postgres)</td><td class="ent">Microsoft Dynamics GP</td></tr>
+            <tr><td><b>Orchestration</b></td><td>n8n workflows</td><td class="ent">n8n / Power Automate / scheduled ETL</td></tr>
+            <tr><td><b>Reconciliation board</b></td><td>This web app</td><td class="ent">BlackLine-style close platform</td></tr>
+            <tr><td><b>Intake</b></td><td>Watched folder · mailbox · upload</td><td class="ent">Monitored AP/treasury mailbox</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section" style="padding:30px 0 10px">
+        <div class="lead" style="margin-bottom:22px"><h2>Who does what</h2><p>Every reconciliation carries a work status as it moves through the roles in the close.</p></div>
+        <table class="maptbl">
+          <thead><tr><th>Role</th><th>Responsibility</th><th>Acts on</th></tr></thead>
+          <tbody>
+            <tr><td><b>Preparer — junior / senior</b></td><td>Locates the statement, resolves variances, attaches support</td><td>Acknowledged → Assigned → In progress</td></tr>
+            <tr><td><b>Approver — Principal</b></td><td>Reviews the prepared reconciliation and the supporting docs</td><td>Approves prepared items</td></tr>
+            <tr><td><b>Reviewer — Director</b></td><td>Oversees throughput, aging, and sign-off across the close</td><td>Reviews · sees the productivity dashboard</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="text-align:center;padding:30px 0 10px">
+        <a class="btn lg" href="workspace.html"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>Open the workspace</a>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/app.js?v=1.9.0"></script>
+<script>
+  renderSidebar('how');
+  const steps=[...document.querySelectorAll('#flow .step')];
+  steps.forEach((s,i)=>setTimeout(()=>s.classList.add('in'), 150+i*180));
+</script>
+</body>
+</html>

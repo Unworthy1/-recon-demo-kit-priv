@@ -1,0 +1,40 @@
+# FERC account-range -> Project map (FERC electric USoA, 18 CFR Part 101).
+# Authored from INTAKE.md §K (the fillable mapping table). This is the DEFAULT, shipped for
+# reference — review against your actual chart of accounts and override freely. Gas (Part 201) and
+# oil pipeline (Part 352) use different numbers.
+#
+# Each range maps a 3-digit FERC account span (inclusive) to a Project, an expense type, and an
+# optional association/note. These columns mirror the INTAKE §K table.
+
+ranges:
+  - {low: 101, high: 101, project: "Plant in service (control)",            expense_type: "Capital",       note: ""}
+  - {low: 105, high: 105, project: "Plant held for future use",            expense_type: "Capital",       note: ""}
+  - {low: 106, high: 107, project: "CWIP — capital projects",              expense_type: "Capital",       note: "settle by work order"}
+  - {low: 108, high: 115, project: "Accumulated depreciation & plant adj", expense_type: "Capital",       note: ""}
+  - {low: 151, high: 174, project: "Materials, inventory & current assets",expense_type: "Balance sheet", note: ""}
+  - {low: 181, high: 191, project: "Deferred debits / regulatory assets",  expense_type: "Balance sheet", note: ""}
+  - {low: 201, high: 253, project: "Liabilities & equity",                 expense_type: "Balance sheet", note: ""}
+  - {low: 301, high: 303, project: "Intangible plant",                     expense_type: "Capital",       note: ""}
+  - {low: 310, high: 347, project: "Production plant",                      expense_type: "Capital",       note: ""}
+  - {low: 350, high: 359, project: "Transmission plant",                   expense_type: "Capital",       note: ""}
+  - {low: 360, high: 374, project: "Distribution plant",                   expense_type: "Capital",       note: ""}
+  - {low: 380, high: 388, project: "Regional transmission & market plant", expense_type: "Capital",       note: ""}
+  - {low: 389, high: 399, project: "General plant",                        expense_type: "Capital",       note: ""}
+  - {low: 400, high: 432, project: "Income accounts",                      expense_type: "Income",        note: ""}
+  - {low: 440, high: 457, project: "Operating revenues",                   expense_type: "Revenue",       note: ""}
+  - {low: 500, high: 557, project: "Production O&M",                       expense_type: "O&M",           note: ""}
+  - {low: 560, high: 576, project: "Transmission O&M",                     expense_type: "O&M",           note: ""}
+  - {low: 580, high: 598, project: "Distribution O&M",                     expense_type: "O&M",           note: ""}
+  - {low: 901, high: 905, project: "Customer accounts",                    expense_type: "O&M",           note: ""}
+  - {low: 907, high: 910, project: "Customer service & information",       expense_type: "O&M",           note: ""}
+  - {low: 911, high: 917, project: "Sales",                               expense_type: "O&M",           note: ""}
+  - {low: 920, high: 935, project: "Administrative & general (A&G)",       expense_type: "O&M",           note: "overhead allocation"}
+
+default: "Unmapped — review"
+
+# How to pull the 3-digit FERC number out of YOUR account code string. Default grabs the first
+# standalone 3-digit token (handles "560", "560-00", "01-560-00", "560.500"). If your COA
+# concatenates FERC + sub-account (e.g. "560500"), use a prefix pattern instead.
+extract:
+  regex: '(?<!\d)(\d{3})(?!\d)'
+  # regex: '^(\d{3})'   # alternative: first 3 digits are the FERC account

@@ -1,0 +1,21 @@
+# Front the OpenRecon Kit behind a Caddy reverse proxy.
+# Replace the hostname and path for your environment, then `caddy reload`.
+#
+# Works the same with nginx/Apache — the kit is just static files; point any
+# web server's docroot at the `web/` directory.
+
+# --- Public host with automatic TLS ---
+recon-demo.example.com {
+    root * /srv/openrecon/web
+    file_server
+    encode gzip
+}
+
+# --- Internal / LAN host (no public TLS) ---
+# Requires `auto_https off` in your global options block, and the http:// scheme
+# prefix so Caddy doesn't default to 443 and let a :80 catch-all swallow it.
+#
+# http://recon-demo.internal {
+#     root * /srv/openrecon/web
+#     file_server
+# }
