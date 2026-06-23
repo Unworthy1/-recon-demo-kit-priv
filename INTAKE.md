@@ -242,6 +242,25 @@ are tagged `origin='historical_import'` — migrated **evidence**, never present
   (`account_code`, `period_end`): → `…`
 - **Who attests the migration** (a reviewer/director signs off the loaded batches): → `…`
 
+## N. Teams & cross-team collaboration
+
+Reconciliations are rarely settled by Accounting alone — a variance gets resolved by asking Treasury for
+a bank confirmation, Operations for a work order, or Audit to attest. OpenRecon models **teams** as a
+layer *orthogonal* to the §F org-role hierarchy: the org-role gates access & segregation of duties; a
+**team** is the function a person speaks for in a reconciliation's discussion thread. A person can sit on
+several teams. Each account *and* project reconciliation carries a thread (comments + attachments), and a
+comment can be a **request to another team** that puts the record in an "awaiting <team>" state until they
+respond — every comment is written to the immutable audit trail. (`stack/db/09-collab.sql`;
+`/api/teams`, `/api/thread/{type}/{id}`, `/api/inbox`.)
+
+- **Which teams participate?** (tick all — these seed the `team` table; you must have ≥2 for cross-team
+  requests to mean anything): `[ ]` Accounting (always) `[ ]` Treasury `[ ]` Audit / Controls
+  `[ ]` Operations / Business unit `[ ]` Tax `[ ]` FP&A `[ ]` other: → `…`
+- **Who sits on each team** (name → team(s); list anyone who's on more than one): → `…`
+- **Do you want the "request → awaiting <team>" routing**, or a plain comment thread only? → `request + awaiting`
+- **Does a comment/attachment need its own retention/export** in the audit package beyond the control
+  actions? → `…`
+
 ---
 
 ## Minimum to start
