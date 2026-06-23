@@ -39,6 +39,35 @@ const RECON = {
 
 RECON.accounts.forEach(a=>{ a.variance = (a.stmt===null) ? null : Math.round((a.gl - a.stmt)*100)/100; });
 
+/* ───────── Teams: a collaboration grouping orthogonal to the org-role hierarchy ─────────
+   org-role (junior→director) gates access + segregation of duties; a *team* is the function a
+   person speaks for in a reconciliation thread. A user can sit on more than one team. */
+RECON.teams = [
+  {id:"accounting", name:"Accounting",       descr:"Owns the reconciliations — prepares, reviews & approves the close"},
+  {id:"treasury",   name:"Treasury",         descr:"Bank relationships, statements, wires & balance confirmations"},
+  {id:"audit",      name:"Audit & Controls", descr:"Internal audit / SOX — reviews evidence and attests to controls"},
+  {id:"operations", name:"Operations",       descr:"Project & business-unit owners — explain variances, supply WO/PO/invoices"},
+];
+// existing accountants are Accounting; add cross-functional counterparts so the thread is multi-team
+RECON.team.push(
+  {name:"Tara V.", init:"TV", role:"senior",    email:"tara.v@meridianpower.example"},
+  {name:"Nina O.", init:"NO", role:"principal", email:"nina.o@meridianpower.example"},
+  {name:"Glen M.", init:"GM", role:"senior",    email:"glen.m@meridianpower.example"},
+);
+const _TEAM_OF = {
+  "Sam R.":["accounting"], "Priya N.":["accounting"], "Joe B.":["accounting"],
+  "Dana P.":["accounting"], "Maria L.":["accounting"], "Robert K.":["accounting","audit"],
+  "Tara V.":["treasury"], "Nina O.":["audit"], "Glen M.":["operations"],
+};
+RECON.team.forEach(t=>{ t.teams = _TEAM_OF[t.name] || ["accounting"]; });
+function teamById(id){ return RECON.teams.find(t=>t.id===id) || {id, name:id}; }
+function teamLabel(id){ return teamById(id).name; }
+function teamsOf(name){ const u=RECON.team.find(t=>t.name===name); return u? (u.teams||["accounting"]) : ["accounting"]; }
+function primaryTeam(name){ return teamsOf(name)[0]; }
+function membersOf(teamId){ return RECON.team.filter(t=>(t.teams||[]).includes(teamId)); }
+const TEAM_COLOR = {accounting:"#185FA5", treasury:"#0E8A6B", audit:"#534AB7", operations:"#C9790B"};
+function teamColor(id){ return TEAM_COLOR[id] || "#5A6385"; }
+
 /* ---- project reconciliations: one supporting document settles many FERC accounts ----
    (one expense allocated across accounts; the lines must tie to the source within tolerance) */
 RECON.projects = [
@@ -343,3 +372,159 @@ function buildDocuments(){
   });
   return docs;
 }
+
+/* ───────── Reconciliation discussion thread — multi-team comments, attachments & cross-team requests ─────────
+   Client-side only (localStorage) for this showcase. The deployable stack persists every comment to the
+   recon_comment table and the immutable audit trail — GET/POST /api/thread/{entity_type}/{entity_id}
+   (stack/api/app.py), with the same "request → awaiting <team> → response clears it" semantics. */
+const SEED_THREADS = {
+  "reconciliation:2020": [
+    {id:1, ts:"Jun 2, 09:12", author:"Joe B.", team:"accounting", kind:"comment",
+     body:"GL shows -$58,740.21 but the Amex statement is -$61,240.21 — a $2,500 gap. Looks like a late-posted card charge."},
+    {id:2, ts:"Jun 2, 09:15", author:"Joe B.", team:"accounting", kind:"request", toTeam:"treasury",
+     body:"Can Treasury confirm the May closing balance and send the statement PDF? Want to verify the $2,500 before I book it."},
+    {id:3, ts:"Jun 2, 14:40", author:"Tara V.", team:"treasury", kind:"response", resolvesId:2,
+     body:"Confirmed — $61,240.21 closing. The $2,500 is a 5/31 fuel charge that posted 6/1. Statement attached.",
+     attach:{name:"Amex_May2026_statement.pdf", ref:"DMS-88421"}},
+  ],
+  "project:PRJ-IT-0526": [
+    {id:1, ts:"Jun 3, 10:05", author:"Sam R.", team:"accounting", kind:"comment",
+     body:"Allocations tie to $31,050 but the invoice is $31,500 — a $450 variance. Missing a line?"},
+    {id:2, ts:"Jun 3, 10:07", author:"Sam R.", team:"accounting", kind:"request", toTeam:"operations",
+     body:"Ops — can you confirm the scope on the Managed IT invoice? Which cost center absorbs the extra $450?"},
+  ],
+};
+function _threadKey(etype, eid){ return "or_thread_"+etype+":"+eid; }
+function loadThread(etype, eid){
+  const k=_threadKey(etype,eid);
+  try{ const s=localStorage.getItem(k); if(s) return JSON.parse(s); }catch(e){}
+  return (SEED_THREADS[etype+":"+eid]||[]).map(function(c){ return Object.assign({}, c); });
+}
+function saveThread(etype, eid, list){ try{ localStorage.setItem(_threadKey(etype,eid), JSON.stringify(list)); }catch(e){} }
+// open requests = a request with no response that resolves it
+function openRequests(list){ return list.filter(function(c){ return c.kind==='request' && !list.some(function(x){ return x.resolvesId===c.id; }); }); }
+
+function _frThreadCss(){
+  if(typeof document==='undefined' || document.getElementById('fr-thread-css')) return;
+  const s=document.createElement('style'); s.id='fr-thread-css';
+  s.textContent=`
+  .thread{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin-top:18px;box-shadow:var(--shadow)}
+  .thread .th{display:flex;align-items:baseline;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+  .thread .th b{font-size:15px;font-weight:700}.thread .th span{font-size:12.5px;color:var(--muted)}
+  .await{display:flex;align-items:center;gap:9px;background:#FBF0DA;border:1px solid #F3D9A6;border-radius:11px;padding:9px 13px;margin:12px 0;font-size:13px;color:#8A5A00;font-weight:600}
+  .await .dot{width:8px;height:8px;border-radius:50%;background:#C9790B;animation:frPulse 1.6s ease-in-out infinite}
+  @keyframes frPulse{0%,100%{opacity:.4}50%{opacity:1}}
+  .cmt{display:flex;gap:12px;padding:13px 0;border-top:1px solid var(--line)}
+  .cmt .cav{width:36px;height:36px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:12.5px}
+  .cmt .cb{flex:1;min-width:0}
+  .cmt .cm{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:3px}
+  .cmt .cm b{font-size:13.5px;font-weight:700}
+  .tbadge{font-size:10.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;border-radius:9px;padding:2px 8px;color:#fff}
+  .cmt .cm .role{font-size:11.5px;color:var(--muted)}.cmt .cm .when{font-size:11.5px;color:var(--muted);margin-left:auto}
+  .cmt .body{font-size:14px;line-height:1.55;color:var(--text)}
+  .reqpill{font-size:11px;font-weight:700;border-radius:9px;padding:2px 8px;background:#FBF0DA;color:#8A5A00}
+  .reqpill.done{background:#E7F7EE;color:#11823F}
+  .attach{display:inline-flex;align-items:center;gap:8px;margin-top:8px;border:1px solid var(--line);border-radius:10px;padding:7px 11px;background:#FAFBFE;font-size:12.5px;font-weight:600;color:var(--text);text-decoration:none}
+  .attach .ai{width:24px;height:24px;border-radius:6px;background:#EEF1F8;display:flex;align-items:center;justify-content:center;color:var(--slate);font-size:9px;font-weight:800}
+  .respond{margin-left:auto;font-size:12px;font-weight:700;color:var(--pink);background:none;border:none;cursor:pointer}
+  .compose{border-top:1px solid var(--line);margin-top:6px;padding-top:15px}
+  .compose textarea{width:100%;min-height:64px;border:1px solid var(--line);border-radius:11px;padding:11px 13px;font:inherit;font-size:14px;resize:vertical;box-sizing:border-box}
+  .compose textarea:focus{outline:none;border-color:var(--pink);box-shadow:0 0 0 3px rgba(255,45,120,.12)}
+  .cbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:11px}
+  .cbar select{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:#fff;cursor:pointer}
+  .cbar .lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .cbar .chipbtn{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--line);border-radius:9px;padding:8px 11px;background:#fff;cursor:pointer;display:inline-flex;align-items:center;gap:6px;color:var(--text)}
+  .cbar .chipbtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2}
+  .cbar .chipbtn.on{border-color:var(--green);background:var(--greenbg);color:var(--green)}
+  .cbar .post{margin-left:auto;font:inherit;font-size:13.5px;font-weight:700;border:none;border-radius:9px;padding:9px 16px;background:var(--grad);color:#fff;cursor:pointer}
+  .respctx{font-size:12.5px;color:#8A5A00;background:#FBF0DA;border-radius:9px;padding:7px 11px;margin-top:10px;display:none;align-items:center;gap:8px}
+  .respctx.on{display:flex}`;
+  document.head.appendChild(s);
+}
+
+function renderThread(hostId, etype, eid){
+  _frThreadCss();
+  const host=document.getElementById(hostId); if(!host) return;
+  const list=loadThread(etype, eid);
+  const open=openRequests(list);
+  const viewer=RECON.viewer, vteams=teamsOf(viewer);
+
+  const awaitBanner = open.map(function(r){
+    const mine=vteams.includes(r.toTeam);
+    const ask=r.body.length>70?r.body.slice(0,70)+'…':r.body;
+    return '<div class="await"><span class="dot"></span>Awaiting <b style="margin:0 3px">'+teamLabel(r.toTeam)+'</b> — '+r.author+' asked: “'+ask+'”'
+      + (mine?'<button class="respond" onclick="frRespond(\''+hostId+'\',\''+etype+'\',\''+eid+'\','+r.id+')">Respond &amp; resolve ↩</button>':'')
+      + '</div>';
+  }).join('');
+
+  const rows=list.map(function(c){
+    const u=RECON.team.find(function(t){ return t.name===c.author; });
+    const init=u?u.init:initials(c.author), role=u?roleLabel(u.role):'';
+    const reqDone = c.kind==='request' && list.some(function(x){ return x.resolvesId===c.id; });
+    const tag='<span class="tbadge" style="background:'+teamColor(c.team)+'">'+teamLabel(c.team)+'</span>';
+    let kindPill='';
+    if(c.kind==='request') kindPill='<span class="reqpill '+(reqDone?'done':'')+'">'+(reqDone?'✓ answered by ':'→ asked ')+teamLabel(c.toTeam)+'</span>';
+    if(c.kind==='response' && c.resolvesId) kindPill='<span class="reqpill done">✓ resolved request</span>';
+    const attach=c.attach?'<a class="attach" href="documents.html" onclick="return false"><span class="ai">PDF</span>'+c.attach.name+(c.attach.ref?' · '+c.attach.ref:'')+'</a>':'';
+    return '<div class="cmt">'
+      + '<div class="cav" style="background:'+teamColor(c.team)+'">'+init+'</div>'
+      + '<div class="cb">'
+      + '<div class="cm"><b>'+c.author+'</b>'+tag+'<span class="role">'+role+'</span>'+kindPill+'<span class="when">'+c.ts+'</span></div>'
+      + '<div class="body">'+c.body+'</div>'+attach
+      + '</div></div>';
+  }).join('');
+
+  const postAsSel = vteams.length>1
+    ? '<span class="lbl">as</span><select id="cm-team">'+vteams.map(function(t){ return '<option value="'+t+'">'+teamLabel(t)+'</option>'; }).join('')+'</select>'
+    : '<input type="hidden" id="cm-team" value="'+vteams[0]+'">';
+  const otherTeams=RECON.teams.filter(function(t){ return !vteams.includes(t.id); });
+  const reqSel='<span class="lbl">request from</span><select id="cm-to"><option value="">— no one —</option>'+otherTeams.map(function(t){ return '<option value="'+t.id+'">'+t.name+'</option>'; }).join('')+'</select>';
+
+  const emptyMsg='<p class="note" style="color:var(--muted);font-size:13.5px;padding:10px 0">No comments yet — start the conversation.</p>';
+  host.innerHTML='<div class="thread">'
+    + '<div class="th"><b>Discussion</b><span>multi-team thread on this reconciliation — comments, attachments &amp; cross-team requests · audited</span></div>'
+    + awaitBanner
+    + '<div id="cmts">'+(rows||emptyMsg)+'</div>'
+    + '<div class="compose">'
+    + '<div class="respctx" id="respctx"></div>'
+    + '<textarea id="cm-body" placeholder="Add a comment, or request something from another team…"></textarea>'
+    + '<div class="cbar">'
+    + postAsSel + reqSel
+    + '<button class="chipbtn" id="cm-attach" onclick="frToggleAttach()"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.2-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach</button>'
+    + '<button class="post" onclick="frPostComment(\''+hostId+'\',\''+etype+'\',\''+eid+'\')">Post</button>'
+    + '</div></div></div>';
+}
+let _frAttach=null, _frRespondTo=null;
+function frToggleAttach(){
+  const b=document.getElementById('cm-attach');
+  if(_frAttach){ _frAttach=null; b.classList.remove('on'); b.lastChild.textContent='Attach'; return; }
+  const name=(prompt('Attachment filename','supporting_document.pdf')||'').trim();
+  if(!name) return;
+  _frAttach={name:name, ref:'DMS-'+Math.floor(10000+Math.random()*89999)};
+  b.classList.add('on'); b.lastChild.textContent=name.length>18?name.slice(0,18)+'…':name;
+}
+function frRespond(hostId, etype, eid, reqId){
+  _frRespondTo=reqId;
+  const list=loadThread(etype,eid), r=list.find(function(c){ return c.id===reqId; });
+  const ctx=document.getElementById('respctx');
+  if(ctx){ ctx.classList.add('on'); ctx.innerHTML='↩ Responding to '+(r?r.author:'')+': “'+(r?r.body.slice(0,60):'')+'…” — your reply will clear the wait. <button class="respond" style="margin-left:auto" onclick="frCancelRespond()">cancel</button>'; }
+  const ta=document.getElementById('cm-body'); if(ta) ta.focus();
+}
+function frCancelRespond(){ _frRespondTo=null; const ctx=document.getElementById('respctx'); if(ctx){ctx.classList.remove('on');ctx.innerHTML='';} }
+function frPostComment(hostId, etype, eid){
+  const ta=document.getElementById('cm-body'); const body=(ta.value||'').trim();
+  if(!body){ ta.focus(); return; }
+  const team=document.getElementById('cm-team').value;
+  const toTeam=document.getElementById('cm-to').value;
+  const list=loadThread(etype, eid);
+  const nid=(list.reduce(function(m,c){ return Math.max(m,c.id); },0)||0)+1;
+  const ts=new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  const c={id:nid, ts:ts, author:RECON.viewer, team:team, body:body, kind:'comment'};
+  if(_frRespondTo){ c.kind='response'; c.resolvesId=_frRespondTo; }
+  else if(toTeam){ c.kind='request'; c.toTeam=toTeam; }
+  if(_frAttach) c.attach=_frAttach;
+  list.push(c); saveThread(etype, eid, list);
+  _frAttach=null; _frRespondTo=null;
+  renderThread(hostId, etype, eid);
+}
+if(typeof window!=='undefined'){ window.renderThread=renderThread; window.frPostComment=frPostComment; window.frToggleAttach=frToggleAttach; window.frRespond=frRespond; window.frCancelRespond=frCancelRespond; }

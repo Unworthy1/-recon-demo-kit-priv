@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenRecon — account detail</title>
-<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+<link rel="stylesheet" href="assets/app.css?v=1.10.0">
 <style>
   .wrap{max-width:980px;margin:0 auto;padding:30px 26px 60px}
   .back{display:inline-flex;align-items:center;gap:7px;color:var(--muted);text-decoration:none;font-size:13.5px;font-weight:600;margin-bottom:18px}
@@ -65,7 +65,7 @@
 </head>
 <body>
 <div class="wrap" id="wrap"></div>
-<script src="assets/app.js?v=1.9.0"></script>
+<script src="assets/app.js?v=1.10.0"></script>
 <script>
   const id = new URLSearchParams(location.search).get('id') || RECON.accounts[0].id;
   const a = RECON.accounts.find(x=>x.id===id) || RECON.accounts[0];
@@ -162,7 +162,10 @@
       <div class="steps">${stepsHtml}</div>
       ${rolesHtml}${apprAction}
     </div>
-    ${verdict}`;
+    ${verdict}
+    <div id="thread"></div>`;
+
+  renderThread('thread', 'reconciliation', a.id);
 
   function resolve(){
     const v=document.getElementById('verdict');

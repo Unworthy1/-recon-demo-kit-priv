@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenRecon — Team &amp; roles</title>
-<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+<link rel="stylesheet" href="assets/app.css?v=1.10.0">
 <style>
   .viewsel{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:10px;padding:7px 11px;background:#fff}
   .viewsel label{font-size:12px;color:var(--muted);font-weight:600}
@@ -41,11 +41,15 @@
           <tbody id="matrix"></tbody>
         </table>
       </div>
+      <div class="panel" style="margin-top:18px">
+        <div class="ph"><b>Teams</b><span style="margin-left:auto;font-size:12.5px;color:var(--muted);font-weight:600">collaboration groups — who speaks for each function in a reconciliation thread (orthogonal to org-role)</span></div>
+        <div id="teams" style="padding:8px 20px 20px"></div>
+      </div>
       <div id="hier"></div>
     </div>
   </div>
 </div>
-<script src="assets/app.js?v=1.9.0"></script>
+<script src="assets/app.js?v=1.10.0"></script>
 <script>
   renderSidebar('team');
 
@@ -71,6 +75,27 @@
   const cell = on => on?'<span class="yes">✓</span>':'<span class="no">—</span>';
   document.getElementById('matrix').innerHTML = RECON.roles.map(r=>`
     <tr><td>${r.label}</td><td>${cell(can(r.key,'prepare'))}</td><td>${cell(can(r.key,'approve'))}</td><td>${cell(can(r.key,'review'))}</td></tr>`).join('');
+
+  // teams (collaboration groups) — each with its members; a person can sit on several
+  document.getElementById('teams').innerHTML = RECON.teams.map(tm=>{
+    const mem = membersOf(tm.id);
+    const chips = mem.map(p=>{
+      const lead = (p.teams||[]).indexOf(tm.id)===0 && tm.id===primaryTeam(p.name);
+      return `<span class="rchip" style="border-color:${teamColor(tm.id)}33">
+        <span class="av" style="width:26px;height:26px;font-size:11px;background:${teamColor(tm.id)};color:#fff">${p.init}</span>
+        <b>${p.name}</b><span class="tg">${roleLabel(p.role)}</span>
+        ${(p.teams||[]).length>1?'<span class="tg" style="background:#EEEDFE;color:#534AB7">multi-team</span>':''}</span>`;
+    }).join('');
+    return `<div style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
+        <span style="width:11px;height:11px;border-radius:50%;background:${teamColor(tm.id)}"></span>
+        <b style="font-size:14.5px">${tm.name}</b>
+        <span style="font-size:12px;color:var(--muted)">${tm.descr}</span>
+        <span class="badge2" style="margin-left:auto">${mem.length} member${mem.length>1?'s':''}</span>
+      </div>
+      <div style="display:flex;gap:9px;flex-wrap:wrap">${chips}</div>
+    </div>`;
+  }).join('');
 
   // hierarchy + workload, grouped by tier (high to low)
   const order=['director','principal','senior','junior'];

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenRecon — project reconciliation</title>
-<link rel="stylesheet" href="assets/app.css?v=1.9.0">
+<link rel="stylesheet" href="assets/app.css?v=1.10.0">
 <style>
   .wrap{max-width:1000px;margin:0 auto;padding:30px 26px 60px}
   .back{display:inline-flex;align-items:center;gap:7px;color:var(--muted);text-decoration:none;font-size:13.5px;font-weight:600;margin-bottom:18px}
@@ -59,8 +59,8 @@
 </head>
 <body>
 <div class="wrap" id="wrap"></div>
-<script src="assets/ferc.js?v=1.9.0"></script>
-<script src="assets/app.js?v=1.9.0"></script>
+<script src="assets/ferc.js?v=1.10.0"></script>
+<script src="assets/app.js?v=1.10.0"></script>
 <script>
   const id = new URLSearchParams(location.search).get('id') || RECON.projects[0].id;
   const p = RECON.projects.find(x=>x.id===id) || RECON.projects[0];
@@ -128,7 +128,10 @@
     <div class="panel" style="margin-top:18px"><div class="ph">Work status <span>— preparer → approver → reviewer · one sign-off settles the whole group</span></div>
       <div style="padding:18px 22px 6px"><div class="steps">${steps}</div></div>
       ${rolesHtml}
-    </div>`;
+    </div>
+    <div id="thread"></div>`;
+
+  renderThread('thread', 'project', p.id);
 
   function settle(){
     const t=document.getElementById('tieout');

@@ -23,7 +23,7 @@ import etl
 import projects.funding_map as fmap
 from ferc.classifier import FERCClassifier
 
-app = FastAPI(title="OpenRecon API", version="1.9.0")
+app = FastAPI(title="OpenRecon API", version="1.10.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DB_URL = os.environ["DATABASE_URL"]
@@ -290,18 +290,33 @@ def _user_caps(c, who: str):
         return None
     u["capabilities"] = [r["capability"] for r in
                          c.execute("SELECT capability FROM role_capability WHERE org_role=%s", (u["org_role"],)).fetchall()]
+    u["teams"] = [r["team_id"] for r in
+                  c.execute("SELECT team_id FROM user_team WHERE user_id=%s ORDER BY is_lead DESC, team_id", (u["id"],)).fetchall()]
     return u
+
+
+def _resolve_author_team(u: dict, requested: str | None):
+    """Pick the team a user posts as: an explicit one they belong to, else their primary team."""
+    teams = u.get("teams") or []
+    if requested:
+        if requested not in teams:
+            raise HTTPException(403, f"{u['name']} is not a member of team '{requested}'")
+        return requested
+    return teams[0] if teams else None
 
 
 @app.get("/api/users")
 def users():
-    """The accountant directory: org role + workflow capabilities per user."""
+    """The accountant directory: org role + workflow capabilities + team memberships per user."""
     with db() as c:
         us = c.execute("SELECT * FROM app_user WHERE active ORDER BY org_role, name").fetchall()
         caps: dict = {}
         for r in c.execute("SELECT * FROM role_capability").fetchall():
             caps.setdefault(r["org_role"], []).append(r["capability"])
-    return {"users": [{**u, "capabilities": caps.get(u["org_role"], [])} for u in us]}
+        teams: dict = {}
+        for r in c.execute("SELECT user_id, team_id FROM user_team ORDER BY is_lead DESC, team_id").fetchall():
+            teams.setdefault(r["user_id"], []).append(r["team_id"])
+    return {"users": [{**u, "capabilities": caps.get(u["org_role"], []), "teams": teams.get(u["id"], [])} for u in us]}
 
 
 @app.get("/api/me")
@@ -660,3 +675,121 @@ def project_allocate(pid: str, total: float | None = None, user: str = "Joe B.",
         c.commit()
     tied = round(sum(l["allocated"] for l in lines), 2) == round(amount, 2)
     return {"ok": True, "project": pid, "total": amount, "lines": lines, "ties_out": tied}
+
+
+# ═══════════════════════════ multi-team collaboration (#25) ═══════════════════════════
+ENTITY_TYPES = ("reconciliation", "project")
+COMMENT_KINDS = ("comment", "request", "response")
+
+
+@app.get("/api/teams")
+def teams():
+    """The teams (collaboration grouping, orthogonal to org-role), their members, and how many
+    open cross-team requests currently sit with each."""
+    with db() as c:
+        ts = c.execute("SELECT * FROM team ORDER BY id").fetchall()
+        members: dict = {}
+        for r in c.execute("""SELECT ut.team_id, u.id, u.name, u.org_role, ut.is_lead
+                              FROM user_team ut JOIN app_user u ON u.id = ut.user_id
+                              WHERE u.active ORDER BY ut.is_lead DESC, u.name""").fetchall():
+            members.setdefault(r["team_id"], []).append(
+                {"id": r["id"], "name": r["name"], "org_role": r["org_role"], "is_lead": r["is_lead"]})
+        awaiting: dict = {}
+        for r in c.execute("SELECT to_team, count(*) AS n FROM recon_open_request GROUP BY to_team").fetchall():
+            awaiting[r["to_team"]] = r["n"]
+    return {"teams": [{**t, "members": members.get(t["id"], []), "open_requests": awaiting.get(t["id"], 0)}
+                      for t in ts]}
+
+
+def _thread_rows(c, entity_type: str, entity_id: str):
+    return c.execute(
+        """SELECT c.*, t.name AS author_team_name, tt.name AS to_team_name
+           FROM recon_comment c
+           LEFT JOIN team t  ON t.id  = c.author_team
+           LEFT JOIN team tt ON tt.id = c.to_team
+           WHERE c.entity_type=%s AND c.entity_id=%s ORDER BY c.created_at, c.id""",
+        (entity_type, entity_id)).fetchall()
+
+
+@app.get("/api/thread/{entity_type}/{entity_id}")
+def thread_get(entity_type: str, entity_id: str):
+    """The full conversation on a reconciliation + its derived 'awaiting <team>' state."""
+    if entity_type not in ENTITY_TYPES:
+        raise HTTPException(404, f"unknown entity_type '{entity_type}'")
+    with db() as c:
+        rows = _thread_rows(c, entity_type, entity_id)
+        awaiting = c.execute("""SELECT to_team, request_id, requested_by, ask, requested_at
+                                FROM recon_open_request WHERE entity_type=%s AND entity_id=%s
+                                ORDER BY requested_at""", (entity_type, entity_id)).fetchall()
+    return {"entity_type": entity_type, "entity_id": entity_id,
+            "comments": rows, "awaiting": awaiting}
+
+
+@app.post("/api/thread/{entity_type}/{entity_id}/comment")
+def thread_post(entity_type: str, entity_id: str, body: str, kind: str = "comment",
+                to_team: str | None = None, resolves_id: int | None = None,
+                team: str | None = None, attachment_name: str | None = None,
+                attachment_ref: str | None = None, user: str = "Joe B.", request: Request = None):
+    """Post to a reconciliation's thread. kind=comment (anyone), request (addressed to a team →
+    sets 'awaiting <team>'), or response (optionally resolves a specific request, clearing the wait).
+    Any authenticated team member may participate; audited to the immutable trail."""
+    if entity_type not in ENTITY_TYPES:
+        raise HTTPException(404, f"unknown entity_type '{entity_type}'")
+    if kind not in COMMENT_KINDS:
+        raise HTTPException(422, f"kind must be one of {COMMENT_KINDS}")
+    if not body or not body.strip():
+        raise HTTPException(422, "body is required")
+    with db() as c:
+        u = _user_caps(c, user)
+        if not u:
+            raise HTTPException(404, "user not found")
+        author_team = _resolve_author_team(u, team)
+        if kind == "request":
+            if not to_team:
+                raise HTTPException(422, "a request must name the team it is addressed to (to_team)")
+            if not c.execute("SELECT 1 FROM team WHERE id=%s", (to_team,)).fetchone():
+                raise HTTPException(422, f"unknown team '{to_team}'")
+        else:
+            to_team = None
+        if resolves_id is not None:
+            req = c.execute("""SELECT id, entity_type, entity_id FROM recon_comment
+                               WHERE id=%s AND kind='request'""", (resolves_id,)).fetchone()
+            if not req or req["entity_type"] != entity_type or req["entity_id"] != entity_id:
+                raise HTTPException(422, "resolves_id must reference a request on this reconciliation")
+        actor, role, ip = actor_of(c, request, user)
+        row = c.execute(
+            """INSERT INTO recon_comment
+                 (entity_type, entity_id, period_end, author, author_role, author_team, kind,
+                  to_team, resolves_id, body, attachment_name, attachment_ref)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, created_at""",
+            (entity_type, entity_id, PERIOD, actor, role, author_team, kind,
+             to_team, resolves_id, body.strip(), attachment_name, attachment_ref)).fetchone()
+        audit(c, actor, f"comment.{kind}", entity_type=entity_type, entity_id=entity_id, period_end=PERIOD,
+              detail={"team": author_team, "to_team": to_team, "resolves_id": resolves_id,
+                      "attachment": attachment_name}, actor_role=role, ip=ip)
+        c.commit()
+    return {"ok": True, "id": row["id"], "kind": kind, "author": actor, "author_team": author_team,
+            "to_team": to_team, "resolves_id": resolves_id, "created_at": row["created_at"]}
+
+
+@app.get("/api/inbox")
+def inbox(team: str | None = None, user: str | None = None):
+    """A team's open requests across all reconciliations — the in-app version of the email inbox.
+    Pass ?team=treasury, or ?user=<name> to fold in every team that user sits on."""
+    teams_filter: list[str] = []
+    with db() as c:
+        if user:
+            u = _user_caps(c, user)
+            if u:
+                teams_filter = u["teams"]
+        if team:
+            teams_filter = [team]
+        q = """SELECT o.*, t.name AS to_team_name FROM recon_open_request o
+               LEFT JOIN team t ON t.id = o.to_team"""
+        params: tuple = ()
+        if teams_filter:
+            q += " WHERE o.to_team = ANY(%s)"
+            params = (teams_filter,)
+        q += " ORDER BY o.requested_at"
+        rows = c.execute(q, params).fetchall()
+    return {"teams": teams_filter or "all", "open_requests": rows}
