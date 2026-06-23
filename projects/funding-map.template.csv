@@ -1,0 +1,4 @@
+project_id,project_name,account_or_range,account_name,funding_pct,expense_type,notes
+PRJ-001,Your project name,1010,Account name,50,Capital,one row per account that funds this project
+PRJ-001,Your project name,1020,Another account,30,Capital,funding_pct values for a project MUST total 100
+PRJ-001,Your project name,500-557,A FERC range works too,20,O&M,use low-high for a range of accounts

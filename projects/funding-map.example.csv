@@ -1,0 +1,14 @@
+project_id,project_name,account_or_range,account_name,funding_pct,expense_type,notes
+PRJ-TX4471,Substation 7 transmission upgrade,352,Structures & improvements,17,Capital,
+PRJ-TX4471,Substation 7 transmission upgrade,353,Station equipment,61,Capital,
+PRJ-TX4471,Substation 7 transmission upgrade,355,Poles & fixtures,10,Capital,
+PRJ-TX4471,Substation 7 transmission upgrade,356,Overhead conductors & devices,12,Capital,
+PRJ-FUEL-0526,Fleet fuel — monthly allocation,560,Transmission — operation supervision,30,O&M,
+PRJ-FUEL-0526,Fleet fuel — monthly allocation,580,Distribution — operation supervision,45,O&M,
+PRJ-FUEL-0526,Fleet fuel — monthly allocation,588,Distribution — miscellaneous expenses,12,O&M,
+PRJ-FUEL-0526,Fleet fuel — monthly allocation,920,Administrative & general salaries,13,O&M,overhead
+PRJ-IT-0526,IT shared services — monthly,921,Office supplies & expenses,39,O&M,
+PRJ-IT-0526,IT shared services — monthly,923,Outside services employed,46,O&M,
+PRJ-IT-0526,IT shared services — monthly,935,Maintenance of general plant,15,O&M,
+PRJ-DIST-CAP,Distribution capital program,360-369,Distribution plant — overhead,55,Capital,FERC range
+PRJ-DIST-CAP,Distribution capital program,370-374,Distribution plant — underground & meters,45,Capital,FERC range
