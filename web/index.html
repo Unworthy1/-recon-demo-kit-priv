@@ -69,9 +69,43 @@
       <div class="fcard">
         <div class="fi"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/><path d="M22 4 12 14.01l-3-3"/></svg></div>
         <h3>Drops into the enterprise</h3>
-        <p>The same shape maps to production: Laserfiche for documents, Microsoft Dynamics GP for the ledger. The demo just swaps in open-source stand-ins.</p>
+        <p>The same shape maps to whatever you run — your documents (Laserfiche, SharePoint…) and your ledger (Microsoft Dynamics 365, NetSuite, SAP…). The demo just swaps in open-source stand-ins.</p>
       </div>
     </div>
+  </section>
+
+  <style>
+    .istack{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;max-width:1100px;margin:0 auto}
+    .icard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;box-shadow:var(--shadow)}
+    .icard .il{font-size:11.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:12px}
+    .ichips{display:flex;flex-wrap:wrap;gap:8px}
+    .ichip{display:inline-flex;align-items:center;font-size:12.5px;font-weight:600;color:var(--text);background:#F4F6FB;border:1px solid var(--line);border-radius:20px;padding:5px 11px}
+    .icard .imore{font-size:12px;color:var(--muted);margin-top:11px}
+    @media(max-width:760px){.istack{grid-template-columns:1fr}}
+  </style>
+  <section class="section" id="stack">
+    <div class="lead">
+      <h2>Works with your stack</h2>
+      <p>Reconciliation doesn't have to live inside any one ERP. Pluggable, read-only adapters connect to the systems you already run — reference adapters for the common ones, and a generic ODBC / CSV / API path for everything else. The board, workflow, and audit trail are identical no matter what feeds them.</p>
+    </div>
+    <div class="istack">
+      <div class="icard">
+        <div class="il">General ledger / ERP</div>
+        <div class="ichips"><span class="ichip">Microsoft Dynamics 365</span><span class="ichip">Dynamics GP</span><span class="ichip">NetSuite</span><span class="ichip">SAP</span><span class="ichip">Oracle</span><span class="ichip">Sage</span><span class="ichip">QuickBooks</span><span class="ichip">Workday</span></div>
+        <div class="imore">…or any scheduled export / ODBC / read-only API.</div>
+      </div>
+      <div class="icard">
+        <div class="il">Document management</div>
+        <div class="ichips"><span class="ichip">Laserfiche</span><span class="ichip">SharePoint / OneDrive</span><span class="ichip">DocuWare</span><span class="ichip">M-Files</span><span class="ichip">OpenText</span><span class="ichip">Paperless-ngx</span></div>
+        <div class="imore">…or any folder, share, or document API.</div>
+      </div>
+      <div class="icard">
+        <div class="il">Bank &amp; treasury feeds</div>
+        <div class="ichips"><span class="ichip">Direct bank API</span><span class="ichip">BAI2 / MT940</span><span class="ichip">Plaid</span><span class="ichip">SFTP feed</span><span class="ichip">Watched folder</span><span class="ichip">Manual upload</span></div>
+        <div class="imore">…statements in, however they arrive.</div>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:12.5px;color:var(--muted);margin:16px auto 0;max-width:760px">Names shown are integration targets via the adapter layer, not endorsements or certified partnerships. GL connections are read-only — the platform never writes to your ledger.</p>
   </section>
 
   <div class="lpfoot">OpenRecon · interactive demo — sample data, no live financials · <a class="navlink" style="margin:0;color:var(--pink)" href="workspace.html">Open the workspace →</a></div>
