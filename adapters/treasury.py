@@ -56,6 +56,20 @@ class WatchedFolderTreasury(TreasuryAdapter):
                 if bal:
                     yield bal
 
+    def fetch_lines(self, period_end: date):
+        """Transaction detail for the matching engine (#34): any dropped file that sniffs as a
+        structured format (BAI2/camt.053/MT940/OFX) yields its lines; anything else (PDF, images)
+        stays balance-only via parse_fn/OCR — same folder, both tiers."""
+        from . import formats
+        for p in sorted(Path(self.folder).glob("*")):
+            if not p.is_file():
+                continue
+            try:
+                for ps in formats.parse(p.read_bytes()):
+                    yield from ps.lines
+            except ValueError:
+                continue                      # unrecognized format — balance-only file
+
 
 @register("treasury", "manual_upload")
 class ManualUploadTreasury(TreasuryAdapter):

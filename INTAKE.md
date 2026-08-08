@@ -283,6 +283,37 @@ separate, larger feature — say if you need it.
 
 ---
 
+## Q. Budget inputs (budget-vs-actual)
+
+**Does a budget system feed budget-vs-actual?** Skip this section entirely if not — nothing
+budget-related appears in the product until it's wired. The agent wires a budget adapter — see
+`adapters/budget.py`. All budget adapters are READ-ONLY.
+
+- **Budget system:** → `Workday Adaptive / ERP budget module / Tyler Munis / Questica / spreadsheet`
+- **Delivery method** (tick one):
+  - `[ ]` Scheduled export (CSV) (path: → `\\fileserver\budget\budget-FY26.csv`)
+  - `[ ]` Generic ODBC (read-only DSN; who holds it: → `IT / DBA team`)
+  - `[ ]` Native API (which: → `Adaptive exportData`)
+- **Scenario(s) to reconcile against:** `[ ]` adopted `[ ]` amended `[ ]` forecast
+- **Basis:** `[ ]` per-period amounts `[ ]` annual (spread evenly / by seasonal curve: → `___`)
+- **Which account groups get budget-vs-actual:** → `all expense + capital accounts`
+
+## R. Billing / subledger inputs (AR, AP, payroll, fixed assets)
+
+**Which subledgers must tie to their GL control accounts?** One block per subledger. Skip if
+none. The agent wires a subledger adapter per source — see `adapters/subledger.py`. READ-ONLY.
+(The billing/AR feed also powers participant receivables if §K projects have funding participants.)
+
+### Subledger 1
+- **Type:** `[ ]` billing/AR `[ ]` AP `[ ]` payroll `[ ]` fixed assets `[ ]` other: → `___`
+- **System:** → `utility CIS / ERP AP module / invoicing SaaS`
+- **GL control account(s):** → `1200 Accounts receivable`
+- **Delivery method** (tick one):
+  - `[ ]` Scheduled export (CSV aging / open-items summary) (path: → `___`)
+  - `[ ]` Generic ODBC (read-only DSN)
+  - `[ ]` REST API (which: → `___`)
+- **Open-item detail available?** `[ ]` yes (enables transaction-level matching) `[ ]` totals only
+
 ## Minimum to start
 
 If you only fill three things, fill these — the agent can deploy a working TEST instance from them:

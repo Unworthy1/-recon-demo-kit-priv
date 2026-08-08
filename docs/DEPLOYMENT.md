@@ -116,6 +116,14 @@ honest — see "Spot-check every release" below.)
 rebuild (not an incremental one over stale state — confirm staged files actually landed on the host first),
 and an actual **browser/DOM check** of the new surface.
 
+## Transaction matching & statement ingest (#34, core)
+
+`POST /api/matching/ingest` reads bank statement files (BAI2 / camt.053 / MT940 / OFX, format-sniffed)
+from the same **`IMPORT_DIR`** volume the historical ETL uses — mount the statement drop path there.
+Statement accounts resolve through the INTAKE §E `source_account` map; unmapped accounts are reported in
+the response, not silently dropped. Every ingest is a provenance batch (`stm-*`) with
+`/api/matching/{batch}/rollback`. No new secrets or external dependencies.
+
 ### Spot-check this guide every release
 This document is only worth anything if it stays true to the code. **At every feature close / wrap-up,
 spot-check this guide** against what you just shipped — did the feature introduce a new surface, a migration

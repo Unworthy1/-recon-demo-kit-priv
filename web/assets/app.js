@@ -592,3 +592,120 @@ function procKpis(){
           exposure:cs.filter(c=>c.status==="exception").reduce((s,c)=>s+c.ordered,0)};
 }
 function procKey(e){ return e.po ? e.po.id : (e.pr ? e.pr.id : "—"); }
+
+/* ── transaction-level matching (#34, core — free tier; ports to the open edition) ── */
+// Demo matching state per account. Accounts WITHOUT an entry are balance-only —
+// the panel simply doesn't render (progressive disclosure, same as the real engine).
+RECON.matching = {
+  // clean account: everything matched, no open items — the tie badge shows a fully-explained zero.
+  "1010": {exact:38, rule:4, suggestions:[], open:[]},
+  // payroll: the $3,000 variance is one deposit in transit + one suggestion awaiting a human.
+  "1020": {exact:41, rule:2,
+    suggestions:[{id:"s-1020-1",
+      gl:  {date:"2026-05-28", ref:"JE-2210",  desc:"Payroll adjustment JE",  amt:-1250.00},
+      stmt:{date:"2026-05-29", ref:"ACH-7741", desc:"ACH PAYROLL ADJ",        amt:-1250.00}}],
+    open:[{side:"gl", date:"2026-05-30", ref:"DEP-5521", desc:"Deposit in transit — recorded 5/30", amt:3000.00, age:"0-30"}]},
+  // Amex: the statement has a fee the GL has not booked yet — a bank-side open item explains it all.
+  "2020": {exact:17, rule:0, suggestions:[],
+    open:[{side:"stmt", date:"2026-05-27", ref:"FEE-ANNUAL", desc:"Annual card fee — not yet booked in GL", amt:-2500.00, age:"0-30"}]},
+  // intercompany UK: only $8,000 of the $11,500 variance is explained — the badge goes amber.
+  "2710": {exact:9, rule:1, suggestions:[],
+    open:[{side:"gl", date:"2026-05-29", ref:"WIRE-IC-88", desc:"IC wire in transit to UK", amt:8000.00, age:"0-30"}]}
+};
+
+function _matchTie(acct, m){
+  const glo = m.open.filter(o=>o.side==='gl').reduce((s,o)=>s+o.amt,0);
+  const sto = m.open.filter(o=>o.side==='stmt').reduce((s,o)=>s+o.amt,0);
+  const explained = Math.round((glo - sto)*100)/100;
+  const residual = Math.round(((acct.variance||0) - explained)*100)/100;
+  return {explained, residual, ties: Math.abs(residual) <= 0.01};
+}
+
+function _matchCss(){
+  if (typeof document === 'undefined' || document.getElementById('mtc-css')) return;
+  const s = document.createElement('style'); s.id = 'mtc-css';
+  s.textContent = `
+  .mtc{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin-top:18px;box-shadow:var(--shadow)}
+  .mtc .mh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .mtc .mh b{font-size:15px;font-weight:700}
+  .mtc .mh span.d{font-size:12.5px;color:var(--muted)}
+  .mtcchip{font-size:11px;font-weight:700;border-radius:20px;padding:3px 10px;background:var(--slatebg);color:var(--slate)}
+  .mtcchip.ok{background:var(--greenbg);color:var(--green)} .mtcchip.sg{background:#FBF0DA;color:#8A5A00}
+  .mtcbadge{display:flex;align-items:center;gap:12px;margin-top:14px;border-radius:11px;padding:11px 14px;font-size:13.5px;font-weight:600}
+  .mtcbadge.g{background:var(--greenbg);color:var(--green)} .mtcbadge.a{background:#FBF0DA;color:#8A5A00}
+  .mtcbadge .amt{font-variant-numeric:tabular-nums;font-weight:800}
+  .mtcrow{display:flex;align-items:center;gap:12px;padding:10px 13px;border:1px solid var(--line);border-radius:11px;background:#FAFBFE;margin-top:9px;font-size:13px}
+  .mtcrow .sd{width:44px;text-align:center;font-size:10.5px;font-weight:800;letter-spacing:.4px;border-radius:8px;padding:4px 0}
+  .mtcrow .sd.gl{background:#E6F1FB;color:#185FA5} .mtcrow .sd.bk{background:#EEEDFE;color:#534AB7}
+  .mtcrow .dt{color:var(--muted);white-space:nowrap}
+  .mtcrow .ds{flex:1;min-width:0;font-weight:600}
+  .mtcrow .ds span{display:block;font-size:11.5px;color:var(--muted);font-weight:500}
+  .mtcrow .am{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap}
+  .mtcage{font-size:10.5px;font-weight:700;border-radius:20px;padding:2px 8px;background:var(--slatebg);color:var(--slate)}
+  .mtcage.old{background:#FBEAEA;color:#A23B34}
+  .mtcsug{margin-top:12px;border:1px dashed #D9C88F;border-radius:12px;padding:12px 14px;background:#FFFDF6}
+  .mtcsug .sh2{display:flex;align-items:center;gap:9px;font-size:12.5px;font-weight:700;color:#8A5A00}
+  .mtcsug .pair{margin-top:8px}
+  .mtcsug .ft{display:flex;gap:10px;align-items:center;margin-top:11px;flex-wrap:wrap}
+  .mtcsug .why{font-size:12px;color:var(--muted);margin-right:auto}
+  .mtcbtn{font:inherit;font-size:12.5px;font-weight:700;border-radius:9px;padding:7px 13px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--text)}
+  .mtcbtn.pri{border:none;color:#fff;background:var(--green)}
+  .mtcnote{font-size:12.5px;color:var(--muted);margin-top:12px}`;
+  document.head.appendChild(s);
+}
+
+function renderMatching(hostId, acct){
+  const m = RECON.matching[acct.id];
+  const host = document.getElementById(hostId); if (!host) return;
+  if (!m) { host.innerHTML=''; return; }          // balance-only account — no panel
+  _matchCss();
+  const t = _matchTie(acct, m);
+  const auto = m.exact + m.rule;
+  const chips = `<span class="mtcchip ok">${auto} auto-matched</span>`
+    + (m.suggestions.length ? `<span class="mtcchip sg">${m.suggestions.length} suggested</span>` : '')
+    + `<span class="mtcchip">${m.open.length} open</span>`;
+  const badge = (acct.variance===null) ? '' : t.ties
+    ? `<div class="mtcbadge g">✓ Variance ${money(acct.variance)} fully explained by open items<span style="flex:1"></span><span class="amt">residual $0.00</span></div>`
+    : `<div class="mtcbadge a">⚠ ${money(Math.abs(t.residual))} of the ${money(acct.variance)} variance is unexplained<span style="flex:1"></span><span class="amt">explained ${money(t.explained)}</span></div>`;
+  const rowHtml = o => `<div class="mtcrow">
+      <span class="sd ${o.side==='gl'?'gl':'bk'}">${o.side==='gl'?'GL':'BANK'}</span>
+      <span class="dt">${o.date}</span>
+      <span class="ds">${o.desc}<span>${o.ref}</span></span>
+      <span class="mtcage${o.age==='0-30'?'':' old'}">${o.age}</span>
+      <span class="am">${money(o.amt)}</span></div>`;
+  const openHtml = m.open.length ? m.open.map(rowHtml).join('')
+    : `<p class="mtcnote">No open items — every ledger and statement line for this period is matched.</p>`;
+  const sugHtml = m.suggestions.map(s => `<div class="mtcsug" id="sug-${s.id}">
+      <div class="sh2">Suggested match — same amount, references differ · needs your decision</div>
+      <div class="pair">
+        ${rowHtml({side:'gl', date:s.gl.date, desc:s.gl.desc, ref:s.gl.ref, amt:s.gl.amt, age:'0-30'})}
+        ${rowHtml({side:'stmt', date:s.stmt.date, desc:s.stmt.desc, ref:s.stmt.ref, amt:s.stmt.amt, age:'0-30'})}
+      </div>
+      <div class="ft"><span class="why">The engine proposes; you decide. Confirmed matches are audited to your name.</span>
+        <button class="mtcbtn" onclick="matchDecide('${s.id}','reject')">Reject</button>
+        <button class="mtcbtn pri" onclick="matchDecide('${s.id}','confirm')">Confirm match</button></div>
+    </div>`).join('');
+  host.innerHTML = `<div class="mtc">
+    <div class="mh"><b>Transaction matching</b><span class="d">ledger ↔ statement, line by line</span>
+      <span style="flex:1"></span>${chips}</div>
+    ${badge}
+    ${openHtml}
+    ${sugHtml}
+    <div class="mtcnote">${m.exact} exact · ${m.rule} by rule — rules (amount tolerance, date window, check-number patterns) are configuration, not code.</div>
+  </div>`;
+}
+
+function matchDecide(sugId, decision){
+  const el = document.getElementById('sug-'+sugId); if (!el) return;
+  const who = RECON.currentUser;
+  el.innerHTML = decision==='confirm'
+    ? `<div class="sh2" style="color:var(--green)">✓ Match confirmed by ${who} just now — recorded on the audit trail.</div>`
+    : `<div class="sh2" style="color:var(--slate)">✕ Suggestion rejected by ${who} — both lines return to the open items.</div>`;
+  if (typeof frToast === 'function')
+    frToast(decision==='confirm' ? 'Match confirmed' : 'Suggestion rejected',
+            decision==='confirm' ? 'Audited as manual match — the engine never decides alone.' : 'The lines stay open for a future statement.');
+}
+
+if (typeof window !== 'undefined') {
+  window.renderMatching = renderMatching; window.matchDecide = matchDecide;
+}

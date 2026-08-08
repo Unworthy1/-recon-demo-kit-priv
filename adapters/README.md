@@ -10,6 +10,9 @@ one stub that fits (if it isn't already built).
 INTAKE §B  ──▶  TreasuryAdapter.fetch_statements()   (bank statement balances in)
 INTAKE §C  ──▶  GLAdapter.fetch_balances()           (GL balances in — READ-ONLY)
 INTAKE §D  ──▶  DMSAdapter.ingest() / url_for()       (documents stored + linked)
+INTAKE §K  ──▶  ProjectAdapter.fetch_projects()       (project cost allocations in)
+INTAKE §Q  ──▶  BudgetAdapter.fetch_budget()          (budget-vs-actual in — READ-ONLY)
+INTAKE §R  ──▶  SubledgerAdapter.fetch_balances()     (billing/AR, AP control totals — READ-ONLY)
 ```
 
 ## Support matrix
@@ -21,6 +24,10 @@ INTAKE §D  ──▶  DMSAdapter.ingest() / url_for()       (documents stored +
 | | Email mailbox (IMAP) | `imap` | 🧩 stub |
 | | SFTP pull | `sftp` | 🧩 stub |
 | | Bank API / aggregator | `bank_api` | 🧩 stub |
+| **Statement formats** (any transport) | BAI2 | `formats/bai2` | ✅ ready |
+| | camt.053/052 (ISO 20022) | `formats/camt053` | ✅ ready |
+| | MT940 | `formats/mt940` | ✅ ready |
+| | OFX/QFX | `formats/ofx` | ✅ ready |
 | **General ledger** | Scheduled export (CSV/TB) | `csv_export` | ✅ ready |
 | | Dynamics GP (ODBC) | `dynamics_gp` | 🧩 stub |
 | | NetSuite (SuiteQL/REST) | `netsuite` | 🧩 stub |
@@ -29,13 +36,19 @@ INTAKE §D  ──▶  DMSAdapter.ingest() / url_for()       (documents stored +
 | | Filesystem / share | `filesystem` | ✅ ready |
 | | Laserfiche | `laserfiche` | 🧩 stub |
 | | SharePoint / OneDrive (Graph) | `sharepoint` | 🧩 stub |
+| **Budget** | Scheduled export (CSV) | `csv_export` | ✅ ready |
+| | Generic ODBC (ERP/Munis budget tables) | `odbc` | 🧩 stub |
+| | Workday Adaptive Planning | `adaptive` | 🧩 stub |
+| **Billing / subledger** | Scheduled export (CSV aging) | `csv_export` | ✅ ready |
+| | Generic ODBC (ERP AP/AR tables) | `odbc` | 🧩 stub |
+| | Billing/AR REST API (CIS, invoicing SaaS) | `billing_api` | 🧩 stub |
 
 ✅ ready = usable as-is · 🧩 stub = interface + approach defined, agent implements the marked block ·
 \*Paperless `ingest` has the documented post+poll flow to wire.
 
 ## Implementing a stub (the agent's job, per the INTAKE)
 
-1. Open the module for the connection point (`gl.py` / `treasury.py` / `dms.py`).
+1. Open the module for the connection point (`gl.py` / `treasury.py` / `dms.py` / `budget.py` / `subledger.py`).
 2. Find the class for the system named in the INTAKE (e.g. `DynamicsGPGL`).
 3. Implement the one method marked `raise NotImplementedError(...)`, following the comment.
 4. Keep GL adapters **read-only** — they must never write to the ledger.

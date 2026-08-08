@@ -66,6 +66,40 @@ class StoredDocument:
     raw: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class StatementLine:
+    """One bank-statement transaction (#37/#34). Balance-only sources never produce these."""
+    source_account: str                 # bank account id as it appears on the statement
+    amount: float                       # signed: credits positive, debits negative
+    stmt_date: date
+    description: str = ""
+    bank_ref: Optional[str] = None      # bank reference / check number / FITID
+    raw: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BudgetAmount:
+    """One budget figure for budget-vs-actual (INTAKE §Q)."""
+    gl_account: str                     # GL account key (INTAKE §E account map)
+    amount: float                       # budgeted amount for the period (or annual — see basis)
+    as_of: date                         # period-end the figure applies to
+    scenario: str = "adopted"           # adopted | amended | forecast
+    basis: str = "period"               # period | annual (annual is spread above this layer)
+    raw: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SubledgerBalance:
+    """A subledger's control-account total (INTAKE §R): AP, AR/billing, payroll, fixed assets.
+    The reconciliation ties this against the GL control account's balance."""
+    gl_account: str                     # the GL control account the subledger rolls up to
+    balance: float                      # subledger total at period-end
+    as_of: date
+    subledger: str = ""                 # ap | ar | billing | payroll | fixed_assets | ...
+    open_items: Optional[int] = None    # count of open documents behind the total, if known
+    raw: dict = field(default_factory=dict)
+
+
 # ─────────────────────────── the three interfaces ───────────────────────────
 class TreasuryAdapter(ABC):
     """Bring bank/treasury statement balances in (INTAKE §B). One instance per source."""
@@ -76,6 +110,12 @@ class TreasuryAdapter(ABC):
     def fetch_statements(self, period_end: date) -> Iterable[StatementBalance]:
         """Return the statement balance(s) available for this period. Implementations may
         pull (SFTP/API), read a watched folder/mailbox, or yield what was manually uploaded."""
+
+    def fetch_lines(self, period_end: date) -> Iterable[StatementLine]:
+        """Transaction-level detail for the matching engine (#34). OPTIONAL — balance-only
+        adapters (PDF statements, manual uploads) simply don't override this; the engine
+        falls back to balance-level reconciliation for those accounts."""
+        return ()
 
 
 class GLAdapter(ABC):
@@ -115,10 +155,41 @@ class ProjectAdapter(ABC):
         """Return the open project reconciliations for the period (source amount + allocation lines)."""
 
 
+class BudgetAdapter(ABC):
+    """Bring budget figures in for budget-vs-actual (INTAKE §Q). READ-ONLY — the budget
+    system is authoritative; OpenRecon never writes back."""
+
+    name: str = "budget"
+    read_only: bool = True
+
+    @abstractmethod
+    def fetch_budget(self, period_end: date, accounts: list[str]) -> Iterable[BudgetAmount]:
+        """Return budget amounts for the requested GL accounts (or all in-scope if empty)."""
+
+
+class SubledgerAdapter(ABC):
+    """Bring a subledger's control totals in (INTAKE §R): billing/AR, AP, payroll, fixed
+    assets. Feeds subledger reconciliations (control account ↔ subledger tie-out) and, for
+    billing, the participant receivables the funding layer generates. READ-ONLY."""
+
+    name: str = "subledger"
+    read_only: bool = True
+
+    @abstractmethod
+    def fetch_balances(self, period_end: date, accounts: list[str]) -> Iterable[SubledgerBalance]:
+        """Return subledger control totals for the requested GL control accounts."""
+
+    def fetch_lines(self, period_end: date, gl_account: str) -> Iterable[StatementLine]:
+        """OPTIONAL open-item detail behind a control total (invoice/receipt level), for the
+        matching engine (#34). Balance-only subledger feeds simply don't override this."""
+        return ()
+
+
 # ─────────────────────────── registry (INTAKE choice -> adapter class) ───────────────────────────
 # The agent maps the ticked option in the INTAKE to a key here. Reference + stub adapters
-# register themselves in the sibling modules (treasury.py / gl.py / dms.py).
-_REGISTRY: dict[str, dict[str, type]] = {"treasury": {}, "gl": {}, "dms": {}, "project": {}}
+# register themselves in the sibling modules (treasury.py / gl.py / dms.py / budget.py / subledger.py).
+_REGISTRY: dict[str, dict[str, type]] = {"treasury": {}, "gl": {}, "dms": {}, "project": {},
+                                         "budget": {}, "subledger": {}}
 
 
 def register(kind: str, key: str):

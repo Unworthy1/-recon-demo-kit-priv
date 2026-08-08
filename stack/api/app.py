@@ -20,10 +20,11 @@ import engine
 import notify
 import auth
 import etl
+import matching
 import projects.funding_map as fmap
 from ferc.classifier import FERCClassifier
 
-app = FastAPI(title="OpenRecon API", version="1.11.1")
+app = FastAPI(title="OpenRecon API", version="1.12.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DB_URL = os.environ["DATABASE_URL"]
@@ -617,6 +618,165 @@ def import_rollback(batch_id: str, user: str = "Robert K.", request: Request = N
               actor_role=role, ip=ip)
         c.commit()
     return res
+
+
+# ═══════════════════════════ transaction-level matching (#34, free tier) ═══════════════════════════
+def _period_of(period: str | None) -> date:
+    return date.fromisoformat(period) if period else PERIOD
+
+
+@app.post("/api/matching/ingest")
+def matching_ingest(source: str, profile: str = None, user: str = "Robert K.", request: Request = None):
+    """Parse a statement file into statement lines: bank formats (BAI2/camt.053/MT940/OFX)
+    are sniffed automatically; a CSV export goes through a saved mapping profile (?profile=name)."""
+    with db() as c:
+        actor, role, ip = actor_of(c, request, user)
+        try:
+            res = (matching.ingest_csv_with_profile(c, source, profile, actor) if profile
+                   else matching.ingest_statement_file(c, source, actor))
+        except FileNotFoundError:
+            raise HTTPException(404, f"source not found: {source}")
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        audit(c, actor, "matching.ingest", entity_type="import", entity_id=res["batch"],
+              detail={k: v for k, v in res.items() if k != "statement_balances"},
+              actor_role=role, ip=ip)
+        c.commit()
+    return res
+
+
+@app.get("/api/grir")
+def grir(period: str = None):
+    """GR/IR clearing-account reconciliation (#35): per-PO open residue (received − invoiced),
+    aged, tied against the clearing account's GL balance — gl_balance + sum(open) must be 0."""
+    pe = _period_of(period)
+    with db() as c:
+        items = c.execute("SELECT * FROM grir_open_item ORDER BY po_id").fetchall()
+        acct = c.execute("SELECT id, code, name FROM gl_account WHERE recon_type='clearing'").fetchone()
+        rec = c.execute("SELECT gl_balance FROM reconciliation WHERE gl_account_id=%s AND period_end=%s",
+                        (acct["id"], pe)).fetchone() if acct else None
+        for i in items:
+            i["age"] = matching.age_bucket(i["last_activity"], pe)
+            for k in ("last_receipt", "last_invoice", "last_activity"):
+                i[k] = i[k].isoformat() if i[k] else None
+        open_sum = round(sum(float(i["open_amount"]) for i in items), 2)
+        gl_bal = float(rec["gl_balance"]) if rec and rec["gl_balance"] is not None else None
+        residual = round(gl_bal + open_sum, 2) if gl_bal is not None else None
+    return {"period_end": pe.isoformat(),
+            "clearing_account": acct,
+            "items": items, "open_sum": open_sum, "gl_balance": gl_bal,
+            "tie_out": {"residual": residual,
+                        "ties": residual is not None and abs(residual) <= 0.01}}
+
+
+@app.get("/api/mapping-profiles")
+def mapping_profiles():
+    with db() as c:
+        rows = c.execute("""SELECT id, name, target, config, active, created_by, updated_at
+                            FROM mapping_profile ORDER BY name""").fetchall()
+    return {"profiles": rows}
+
+
+@app.post("/api/mapping-profiles")
+def mapping_profile_save(request: Request = None, user: str = "Robert K.", body: dict = None):
+    """Create or update a mapping profile (upsert by name). Config is validated before save."""
+    from adapters.formats import csvmap
+    body = body or {}
+    try:
+        prof = csvmap.MappingProfile.from_dict(body)
+    except TypeError as e:
+        raise HTTPException(400, f"bad profile: {e}")
+    errs = prof.validate()
+    if errs:
+        raise HTTPException(400, "; ".join(errs))
+    with db() as c:
+        actor, role, ip = actor_of(c, request, user)
+        c.execute("""INSERT INTO mapping_profile (name, target, config, created_by)
+                     VALUES (%s,%s,%s,%s)
+                     ON CONFLICT (name) DO UPDATE SET target=EXCLUDED.target,
+                       config=EXCLUDED.config, active=true, updated_at=now()""",
+                  (prof.name, prof.target, Json(prof.to_dict()), actor))
+        audit(c, actor, "mapping_profile.save", entity_type="mapping_profile", entity_id=prof.name,
+              detail={"target": prof.target}, actor_role=role, ip=ip)
+        c.commit()
+    return {"saved": prof.name, "target": prof.target}
+
+
+@app.post("/api/matching/{batch_id}/rollback")
+def matching_rollback(batch_id: str, user: str = "Robert K.", request: Request = None):
+    with db() as c:
+        actor, role, ip = actor_of(c, request, user)
+        res = matching.rollback_batch(c, batch_id)
+        audit(c, actor, "matching.rollback", entity_type="import", entity_id=batch_id,
+              detail=res, actor_role=role, ip=ip)
+        c.commit()
+    return res
+
+
+@app.post("/api/account/{account_id}/match/run")
+def match_run(account_id: str, period: str = None, user: str = "Joe B.", request: Request = None):
+    """Run the exact → rule → suggestion passes for one account. Auto-matches persist;
+    suggestions await a human decision (maker-checker: the engine proposes, a person disposes)."""
+    with db() as c:
+        actor, role, ip = actor_of(c, request, user)
+        res = matching.run_matching(c, account_id, _period_of(period))
+        audit(c, actor, "matching.run", entity_type="account", entity_id=account_id,
+              period_end=_period_of(period), detail=res, actor_role=role, ip=ip)
+        c.commit()
+    return res
+
+
+@app.get("/api/account/{account_id}/matches")
+def match_list(account_id: str, status: str = None):
+    """Matches touching this account, newest first, with their member lines."""
+    with db() as c:
+        rows = c.execute(
+            """SELECT DISTINCT x.id, x.match_type, x.status, x.rule_id, x.matched_by, x.matched_at,
+                      x.decided_by, x.decided_at
+               FROM txn_match x
+               JOIN txn_match_member m ON m.match_id = x.id
+               LEFT JOIN gl_transaction g ON g.id = m.gl_txn_id
+               LEFT JOIN statement_line s ON s.id = m.stmt_line_id
+               WHERE coalesce(g.gl_account_id, s.gl_account_id) = %s
+                 AND (%s::text IS NULL OR x.status = %s)
+               ORDER BY x.id DESC""", (account_id, status, status)).fetchall()
+        for x in rows:
+            x["members"] = c.execute(
+                """SELECT m.gl_txn_id, m.stmt_line_id,
+                          coalesce(g.amount, s.amount) AS amount,
+                          coalesce(g.txn_date, s.stmt_date) AS item_date,
+                          coalesce(g.description, s.description) AS description,
+                          coalesce(g.doc_ref, s.bank_ref) AS ref
+                   FROM txn_match_member m
+                   LEFT JOIN gl_transaction g ON g.id = m.gl_txn_id
+                   LEFT JOIN statement_line s ON s.id = m.stmt_line_id
+                   WHERE m.match_id = %s""", (x["id"],)).fetchall()
+    return {"account": account_id, "matches": rows}
+
+
+@app.post("/api/match/{match_id}/decide")
+def match_decide(match_id: int, decision: str, user: str = "Joe B.", request: Request = None):
+    """Confirm or reject an engine suggestion."""
+    if decision not in ("confirm", "reject"):
+        raise HTTPException(400, "decision must be confirm|reject")
+    with db() as c:
+        actor, role, ip = actor_of(c, request, user)
+        res = matching.decide(c, match_id, decision, actor)
+        if "error" in res:
+            raise HTTPException(409, res["error"])
+        audit(c, actor, f"matching.{decision}", entity_type="match", entity_id=str(match_id),
+              detail=res, actor_role=role, ip=ip)
+        c.commit()
+    return res
+
+
+@app.get("/api/account/{account_id}/open-items")
+def account_open_items(account_id: str, period: str = None):
+    """The aged open items behind the account's variance + the tie-out assertion."""
+    with db() as c:
+        return matching.open_items(c, account_id, _period_of(period))
 
 
 # ═══════════════════════════ project funding-allocation map (#23) ═══════════════════════════

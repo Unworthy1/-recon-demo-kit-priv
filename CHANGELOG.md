@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.12.0 — 2026-08-08 — transaction matching · statement formats · CSV profiles · GR/IR
+Ported from this arc's build (free tier, all offline-tested here: 39/39 formats, 17/17 csvmap, 21/21 matching):
+- **Transaction-level matching engine (#34)**: `stack/db/13-matching.sql` + `stack/api/matching.py` — exact → rule → suggestion passes per account (greedy 1:1, deterministic), aged open items (outstanding checks / deposits in transit), variance tie-out `variance == gl_open − stmt_open`, maker-checker decisions, all audited. Endpoints: `/api/matching/ingest[?profile=]`, `/{batch}/rollback`, `/api/account/{id}/match/run|matches|open-items`, `/api/match/{id}/decide`.
+- **Bank statement format parsers (#37)**: `adapters/formats/` — BAI2, camt.053/052, MT940, OFX/QFX, transaction-level with sniffing; statements self-check opening + lines == closing.
+- **CSV mapping profiles (#37)**: `adapters/formats/csvmap.py` + `mapping_profile` table + `GET/POST /api/mapping-profiles` — odd exports become saved config, per-row errors reported.
+- **New adapter kinds (#37)**: `BudgetAdapter` (INTAKE §Q) + `SubledgerAdapter` (billing/AR, AP — §R), CSV references ready + ODBC/Adaptive/billing-API stubs; `StatementLine` + optional `fetch_lines()` contracts; `WatchedFolderTreasury` feeds structured files to the engine.
+- **GR/IR clearing-account reconciliation (#35)**: `recon_type` on `gl_account`, `grir_open_item` view (grni / over_invoiced / invoiced_not_received, aged), `GET /api/grir` with a to-the-penny tie-out over the procurement chain.
+- **Account-page matching panel**: tie-out badge (fully-explained / unexplained residual), aged open items, suggestion confirm/reject; balance-only accounts unchanged.
+
+
 ## 1.8.2 — 2026-06-21
 **Reconciliation engine — scale hardening** (verified at 3,000 accounts: 0.13s, ~22k accts/sec, idempotent).
 - **Batched writes**: chunked `executemany` instead of one `INSERT` per account (was N+1 round-trips). Matching was already O(1)/account (GL + statements dict-indexed — no nested scan).

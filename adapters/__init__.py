@@ -1,1 +1,1 @@
-"""OpenRecon adapters — treasury / GL / DMS connection points (see README.md)."""
+"""OpenRecon adapters — treasury / GL / DMS / project / budget / subledger connection points (see README.md)."""
