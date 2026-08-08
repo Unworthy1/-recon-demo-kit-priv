@@ -21,8 +21,8 @@ INTAKE §R  ──▶  SubledgerAdapter.fetch_balances()     (billing/AR, AP con
 |---|---|---|---|
 | **Treasury** | Manual upload | `manual_upload` | ✅ ready |
 | | Watched folder / share | `watched_folder` | ✅ ready |
-| | Email mailbox (IMAP) | `imap` | 🧩 stub |
-| | SFTP pull | `sftp` | 🧩 stub |
+| | Email mailbox (IMAP) | `imap` | ✅ ready |
+| | SFTP pull | `sftp` | ✅ ready* |
 | | Bank API / aggregator | `bank_api` | 🧩 stub |
 | **Statement formats** (any transport) | BAI2 | `formats/bai2` | ✅ ready |
 | | camt.053/052 (ISO 20022) | `formats/camt053` | ✅ ready |
@@ -44,7 +44,7 @@ INTAKE §R  ──▶  SubledgerAdapter.fetch_balances()     (billing/AR, AP con
 | | Billing/AR REST API (CIS, invoicing SaaS) | `billing_api` | 🧩 stub |
 
 ✅ ready = usable as-is · 🧩 stub = interface + approach defined, agent implements the marked block ·
-\*Paperless `ingest` has the documented post+poll flow to wire.
+\**Paperless `ingest` has the documented post+poll flow to wire · SFTP needs `paramiko` (uncomment in requirements).
 
 ## Implementing a stub (the agent's job, per the INTAKE)
 

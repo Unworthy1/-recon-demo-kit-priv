@@ -2,3 +2,4 @@ fastapi
 uvicorn[standard]
 psycopg[binary]
 pyyaml
+# paramiko          # uncomment for SFTPTreasury (INTAKE section B SFTP pull)
