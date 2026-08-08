@@ -44,7 +44,7 @@ INTAKE §R  ──▶  SubledgerAdapter.fetch_balances()     (billing/AR, AP con
 | | Billing/AR REST API (CIS, invoicing SaaS) | `billing_api` | 🧩 stub |
 
 ✅ ready = usable as-is · 🧩 stub = interface + approach defined, agent implements the marked block ·
-\**Paperless `ingest` has the documented post+poll flow to wire · SFTP needs `paramiko` (uncomment in requirements).
+\*Paperless `ingest` has the documented post+poll flow to wire · SFTP needs `paramiko` (uncomment in requirements).
 
 ## Implementing a stub (the agent's job, per the INTAKE)
 
