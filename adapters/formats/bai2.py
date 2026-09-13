@@ -28,6 +28,21 @@ def _amount(raw: str, currency: str) -> float:
     return sign * int(digits) / (10 ** exp)
 
 
+def funds_extra(f: list[str], j: int) -> int:
+    """How many fields follow the funds-type field at f[j]: S = 3 availability amounts
+    (immediate, one-day, two-plus-day), V = value date + time, D = a distribution count then
+    (days, amount) pairs. 0/1/2/Z/blank carry nothing extra. Shared with controls.py."""
+    funds = f[j].strip().upper() if j < len(f) else ""
+    if funds == "S":
+        return 3
+    if funds == "V":
+        return 2
+    if funds == "D":
+        n = f[j + 1].strip() if j + 1 < len(f) else ""
+        return 1 + 2 * (int(n) if n.isdigit() else 0)
+    return 0
+
+
 def _logical_records(content: bytes) -> list[list[str]]:
     """Join 88 continuations onto their parent, strip the '/' terminators, split fields."""
     logical: list[str] = []
@@ -68,17 +83,15 @@ def parse(content: bytes) -> Iterable[ParsedStatement]:
                         cur.opening = _amount(amt, cur.currency)
                     elif code == _CLOSING:
                         cur.closing = _amount(amt, cur.currency)
-                i += 4                             # code, amount, item count, funds type
+                i += 4 + funds_extra(f, i + 3)     # code, amount, item count, funds type[, extras]
         elif rtype == "16" and cur is not None:    # detail: code, amount, funds, [refs...], text
             code = f[1].strip()
             amt = _amount(f[2], cur.currency)
             if code and code[0] in "456":          # 400–699 = debit
                 amt = -abs(amt)
             i = 3
-            if i < len(f) and f[i].strip() == "S":
-                i += 4                             # S funds type carries 3 availability amounts
-            elif i < len(f):
-                i += 1
+            if i < len(f):
+                i += 1 + funds_extra(f, 3)         # funds type[, S/V/D extras]
             bank_ref = f[i].strip() if i < len(f) else ""
             text = ",".join(f[i + 2:]).strip() if i + 2 < len(f) else ""
             cur.lines.append(StatementLine(

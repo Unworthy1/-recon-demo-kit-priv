@@ -600,9 +600,15 @@ def import_commit(source: str, user: str = "Robert K.", note: str = "", request:
 
 
 @app.get("/api/import/batches")
-def import_batches():
+def import_batches(status: str = None):
+    """Every import batch (historical ETL + statement ingest), newest first. ?status=quarantined
+    lists what is waiting on a #41 release."""
     with db() as c:
-        rows = c.execute("SELECT * FROM import_batch ORDER BY created_at DESC").fetchall()
+        if status:
+            rows = c.execute("SELECT * FROM import_batch WHERE status=%s ORDER BY created_at DESC",
+                             (status,)).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM import_batch ORDER BY created_at DESC").fetchall()
     return {"batches": rows}
 
 
@@ -626,13 +632,24 @@ def _period_of(period: str | None) -> date:
 
 
 @app.post("/api/matching/ingest")
-def matching_ingest(source: str, profile: str = None, user: str = "Robert K.", request: Request = None):
+def matching_ingest(source: str, profile: str = None, user: str = "Robert K.",
+                    expected_rows: int = None, control_total: float = None, request: Request = None):
     """Parse a statement file into statement lines: bank formats (BAI2/camt.053/MT940/OFX)
-    are sniffed automatically; a CSV export goes through a saved mapping profile (?profile=name)."""
+    are sniffed automatically; a CSV export goes through a saved mapping profile (?profile=name).
+
+    #41 ingest data controls run on every file. The response always carries `status`:
+    committed (feeds matching) · quarantined (a blocking control failed — loaded as evidence,
+    excluded from matching until a reviewer releases it) · rejected (duplicate or unparseable —
+    nothing loaded). CSV only: ?expected_rows= / ?control_total= declare totals to prove."""
+    if (expected_rows is not None or control_total is not None) and not profile:
+        raise HTTPException(400, "expected_rows / control_total apply to CSV (profile) ingest; "
+                                 "bank formats carry their own control totals")
     with db() as c:
         actor, role, ip = actor_of(c, request, user)
         try:
-            res = (matching.ingest_csv_with_profile(c, source, profile, actor) if profile
+            res = (matching.ingest_csv_with_profile(c, source, profile, actor,
+                                                    expected_rows=expected_rows,
+                                                    control_total=control_total) if profile
                    else matching.ingest_statement_file(c, source, actor))
         except FileNotFoundError:
             raise HTTPException(404, f"source not found: {source}")
@@ -641,10 +658,57 @@ def matching_ingest(source: str, profile: str = None, user: str = "Robert K.", r
         except ValueError as e:
             raise HTTPException(400, str(e))
         audit(c, actor, "matching.ingest", entity_type="import", entity_id=res["batch"],
-              detail={k: v for k, v in res.items() if k != "statement_balances"},
+              detail={k: v for k, v in res.items() if k not in ("statement_balances", "controls")},
               actor_role=role, ip=ip)
+        if res["status"] != "committed":
+            audit(c, actor, f"ingest.{res['status']}", entity_type="import", entity_id=res["batch"],
+                  detail={"source": source, "blocking_failures": res["blocking_failures"],
+                          "duplicate_of": res.get("duplicate_of")},
+                  actor_role=role, ip=ip)
         c.commit()
     return res
+
+
+@app.get("/api/matching/{batch_id}/controls")
+def matching_batch_controls(batch_id: str):
+    """The #41 evidence for one ingest batch: every control, its expected/actual, and outcome."""
+    with db() as c:
+        res = matching.batch_controls(c, batch_id)
+    if res is None:
+        raise HTTPException(404, "batch not found")
+    return res
+
+
+@app.post("/api/matching/{batch_id}/release")
+def matching_release(batch_id: str, reason: str = "", user: str = "Maria L.", request: Request = None):
+    """Release a quarantined batch into matching. Maker-checker: a reviewer (principal/director)
+    who is NOT the uploader, with a mandatory reason — a control override is itself evidence."""
+    with db() as c:
+        actor, role, ip = actor_of(c, request, user)
+        caps = _user_caps(c, actor)
+        if not caps or "review" not in caps["capabilities"]:
+            raise HTTPException(403, "releasing a quarantined import requires a reviewer/director")
+        info = matching.batch_controls(c, batch_id)
+        if info is None:
+            raise HTTPException(404, "batch not found")
+        b = info["batch"]
+        if b["status"] != "quarantined":
+            raise HTTPException(409, f"batch is '{b['status']}', only quarantined batches can be released")
+        if b["created_by"] == caps["name"]:
+            raise HTTPException(409, "segregation of duties: you cannot release your own import")
+        if not reason.strip():
+            raise HTTPException(400, "a release reason is required")
+        row = matching.release_batch(c, batch_id, caps["name"], reason.strip())
+        if row is None:
+            raise HTTPException(409, "batch changed state concurrently; reload and retry")
+        audit(c, caps["name"], "ingest.released", entity_type="import", entity_id=batch_id,
+              before={"status": "quarantined"}, after={"status": "committed"},
+              detail={"uploader": b["created_by"], "reason": reason.strip(),
+                      "overridden": info["blocking_failures"]},
+              actor_role=caps["org_role"], ip=ip)
+        c.commit()
+    return {"batch": batch_id, "status": "committed", "released_by": caps["name"],
+            "reason": reason.strip(), "lines_released": row["rows_loaded"]}
 
 
 @app.get("/api/grir")

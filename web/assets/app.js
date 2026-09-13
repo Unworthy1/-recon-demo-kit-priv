@@ -604,7 +604,14 @@ RECON.matching = {
     suggestions:[{id:"s-1020-1",
       gl:  {date:"2026-05-28", ref:"JE-2210",  desc:"Payroll adjustment JE",  amt:-1250.00},
       stmt:{date:"2026-05-29", ref:"ACH-7741", desc:"ACH PAYROLL ADJ",        amt:-1250.00}}],
-    open:[{side:"gl", date:"2026-05-30", ref:"DEP-5521", desc:"Deposit in transit — recorded 5/30", amt:3000.00, age:"0-30"}]},
+    open:[{side:"gl", date:"2026-05-30", ref:"DEP-5521", desc:"Deposit in transit — recorded 5/30", amt:3000.00, age:"0-30"}],
+    // #41 ingest data controls: a re-sent intraday file whose BAI2 trailer doesn't tie — one
+    // detail record never arrived. Its lines are held out of matching until a reviewer releases it.
+    quarantine:[{batch:"stm-7c41e2a9", file:"chase-payroll-2026-05-30.bai2", via:"SFTP feed",
+      uploaded_by:"Dana P.", lines:5,
+      failures:[{control:"bai2.account_trailer", scope:"account ••8810",
+        detail:"records declared 7, counted 6; control total declared 48,322,000, computed 48,197,000"}],
+      warnings:[{control:"balance.continuity", scope:"account ••8810", detail:"detail does not explain the balance change (residual 1,250.00)"}]}]},
   // Amex: the statement has a fee the GL has not booked yet — a bank-side open item explains it all.
   "2020": {exact:17, rule:0, suggestions:[],
     open:[{side:"stmt", date:"2026-05-27", ref:"FEE-ANNUAL", desc:"Annual card fee — not yet booked in GL", amt:-2500.00, age:"0-30"}]},
@@ -650,7 +657,17 @@ function _matchCss(){
   .mtcsug .why{font-size:12px;color:var(--muted);margin-right:auto}
   .mtcbtn{font:inherit;font-size:12.5px;font-weight:700;border-radius:9px;padding:7px 13px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--text)}
   .mtcbtn.pri{border:none;color:#fff;background:var(--green)}
-  .mtcnote{font-size:12.5px;color:var(--muted);margin-top:12px}`;
+  .mtcnote{font-size:12.5px;color:var(--muted);margin-top:12px}
+  .mtcq{margin-top:14px;border:1px solid #E8B4AE;border-radius:12px;background:#FDF3F2;padding:12px 14px}
+  .mtcq .qh{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:700;color:#A23B34;flex-wrap:wrap}
+  .mtcq .qs{font-size:12.5px;color:#6B3A36;margin-top:4px}
+  .mtcq details{margin-top:9px} .mtcq summary{cursor:pointer;font-size:12.5px;font-weight:700;color:#A23B34}
+  .mtcq .qc{margin-top:8px;font-size:12.5px;border-top:1px solid #F1D3CF;padding-top:8px}
+  .mtcq .qc code{font-size:11.5px;background:#fff;border:1px solid #F1D3CF;border-radius:6px;padding:1px 6px}
+  .mtcq .qc .w code{border-color:#E9D9A8}
+  .mtcq .qf{display:flex;gap:9px;align-items:center;margin-top:11px;flex-wrap:wrap}
+  .mtcq .qf input{flex:1;min-width:200px;font:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:9px;padding:7px 10px}
+  .mtcq .qn{font-size:12px;color:#6B3A36;margin-top:10px}`;
   document.head.appendChild(s);
 }
 
@@ -661,6 +678,26 @@ function renderMatching(hostId, acct){
   _matchCss();
   const t = _matchTie(acct, m);
   const auto = m.exact + m.rule;
+  const held = (m.quarantine||[]).filter(q => !q.released);
+  const qHtml = held.map(q => {                    // progressive disclosure: nothing renders when every control passed
+    const viewer = RECON.viewer, isReviewer = can(viewerRole(), 'review');
+    const action = !isReviewer
+      ? `<div class="qn">Releasing a quarantined file is a control override — a principal or director who did not upload it must approve it.</div>`
+      : viewer === q.uploaded_by
+      ? `<div class="qn">Segregation of duties: you uploaded this file, so another reviewer must release it.</div>`
+      : `<div class="qf"><input id="qr-${q.batch}" placeholder="Release reason — e.g. bank confirmed the re-send is complete">
+           <button class="mtcbtn pri" onclick="releaseQuarantine('${acct.id}','${q.batch}','${hostId}')">Release into matching</button></div>`;
+    return `<div class="mtcq" id="q-${q.batch}">
+      <div class="qh">⛔ Statement file held in quarantine<span style="flex:1"></span><span class="mtcchip">${q.lines} lines excluded</span></div>
+      <div class="qs"><b>${q.file}</b> · ${q.via} · uploaded by ${q.uploaded_by} — the bank's own control totals don't tie, so these lines are kept as evidence but can't match anything or appear as open items.</div>
+      <details><summary>Why it was held (${q.failures.length} blocking${q.warnings.length ? `, ${q.warnings.length} warning` : ''})</summary>
+        ${q.failures.map(f => `<div class="qc"><code>${f.control}</code> ${f.scope} — ${f.detail}</div>`).join('')}
+        ${q.warnings.map(f => `<div class="qc w"><code>${f.control}</code> ${f.scope} — warning: ${f.detail}</div>`).join('')}
+        <div class="qc">Usual fix: roll the batch back and ask the bank to re-send. Release only when the difference is understood.</div>
+      </details>
+      ${action}
+    </div>`;
+  }).join('');
   const chips = `<span class="mtcchip ok">${auto} auto-matched</span>`
     + (m.suggestions.length ? `<span class="mtcchip sg">${m.suggestions.length} suggested</span>` : '')
     + `<span class="mtcchip">${m.open.length} open</span>`;
@@ -688,6 +725,7 @@ function renderMatching(hostId, acct){
   host.innerHTML = `<div class="mtc">
     <div class="mh"><b>Transaction matching</b><span class="d">ledger ↔ statement, line by line</span>
       <span style="flex:1"></span>${chips}</div>
+    ${qHtml}
     ${badge}
     ${openHtml}
     ${sugHtml}
@@ -706,6 +744,24 @@ function matchDecide(sugId, decision){
             decision==='confirm' ? 'Audited as manual match — the engine never decides alone.' : 'The lines stay open for a future statement.');
 }
 
+function releaseQuarantine(acctId, batch, hostId){
+  const m = RECON.matching[acctId], acct = RECON.accounts.find(a => a.id === acctId);
+  const q = m && (m.quarantine||[]).find(x => x.batch === batch);
+  const input = document.getElementById('qr-'+batch);
+  if (!q || !acct) return;
+  const reason = (input && input.value || '').trim();
+  if (!reason) {
+    if (input) { input.focus(); input.style.borderColor = '#A23B34'; }
+    if (typeof frToast === 'function') frToast('Reason required', 'A release overrides a failed control — say why it is safe.');
+    return;
+  }
+  q.released = {by: RECON.viewer, reason};
+  renderMatching(hostId, acct);
+  if (typeof frToast === 'function')
+    frToast('Released into matching', `${q.lines} lines from ${q.file} now feed the engine — audited to ${RECON.viewer} with your reason.`);
+}
+
 if (typeof window !== 'undefined') {
   window.renderMatching = renderMatching; window.matchDecide = matchDecide;
+  window.releaseQuarantine = releaseQuarantine;
 }

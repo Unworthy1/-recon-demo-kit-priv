@@ -129,30 +129,113 @@ def new_batch_id() -> str:
     return "stm-" + secrets.token_hex(4)
 
 
-def ingest_statement_file(c, name: str, created_by: str, import_dir: str | None = None) -> dict:
-    """Parse one statement file (BAI2/camt.053/MT940/OFX, sniffed) into statement_line rows.
-    source_account is resolved through the §E map (gl_account.source_account); unmapped
-    accounts are reported, not silently dropped. Idempotent per file re-run is NOT assumed —
-    every ingest is a new batch; roll back a bad one with rollback_batch()."""
-    from adapters import formats
+def _read_import(name: str, import_dir: str | None) -> bytes:
     import_dir = import_dir or os.environ.get("IMPORT_DIR", "/samples")
     path = os.path.join(import_dir, os.path.basename(name))
     if not os.path.exists(path):
         raise FileNotFoundError(name)
     with open(path, "rb") as f:
-        content = f.read()
-    parsed = list(formats.parse(content))
+        return f.read()
 
+
+def _duplicate_of(c, sha: str) -> Optional[dict]:
+    return c.execute(
+        """SELECT id, status, created_by, created_at FROM import_batch
+           WHERE content_sha256 = %s AND status IN ('committed', 'quarantined')
+           ORDER BY created_at LIMIT 1""", (sha,)).fetchone()
+
+
+def _open_batch(c, name: str, created_by: str, note: str, sha: str, status: str) -> str:
+    batch = new_batch_id()
+    c.execute("""INSERT INTO import_batch (id, source, created_by, note, content_sha256, status)
+                 VALUES (%s,%s,%s,%s,%s,%s)""", (batch, name, created_by, note, sha, status))
+    return batch
+
+
+def _record_controls(c, batch: str, results) -> list[dict]:
+    out = []
+    for r in results:
+        c.execute("""INSERT INTO ingest_control_result
+                       (import_batch_id, control, scope, status, severity, expected, actual, detail)
+                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                  (batch, r.control, r.scope, r.status, r.severity, r.expected, r.actual, r.detail))
+        out.append(r.to_dict())
+    return out
+
+
+def _control_summary(results: list[dict]) -> dict:
+    return {"controls": results,
+            "blocking_failures": [r for r in results
+                                  if r["status"] == "fail" and r["severity"] == "blocking"],
+            "warnings": [r for r in results if r["status"] == "fail" and r["severity"] == "warning"]}
+
+
+def _reject(c, name: str, created_by: str, note: str, sha: str, result) -> dict:
+    """Record a refused file: a batch row + the failed control, zero lines. The evidence that
+    someone tried is as auditable as a load."""
+    batch = _open_batch(c, name, created_by, note, sha, "rejected")
+    return {"batch": batch, "status": "rejected", "lines_loaded": 0,
+            **_control_summary(_record_controls(c, batch, [result]))}
+
+
+def _duplicate_result(dup: dict):
+    from adapters.formats import controls
+    return controls.ControlResult(
+        "file.duplicate", "file", controls.FAIL, controls.BLOCKING,
+        expected="a file not already loaded", actual=f"identical to batch {dup['id']}",
+        detail=f"byte-identical file already loaded as {dup['id']} ({dup['status']}) by "
+               f"{dup['created_by']} - roll that batch back first if a reload is intended")
+
+
+def _unmapped_result(unmapped: list[str], parsed_accounts: int):
+    from adapters.formats import controls
+    return controls.ControlResult(
+        "mapping.source_accounts", "file", controls.FAIL if unmapped else controls.PASS,
+        controls.WARNING, expected=f"{parsed_accounts} mapped", actual=f"{len(unmapped)} unmapped",
+        detail=("lines for unmapped source accounts were not loaded: " + ", ".join(unmapped))
+               if unmapped else "every source account maps to a GL account")
+
+
+def ingest_statement_file(c, name: str, created_by: str, import_dir: str | None = None) -> dict:
+    """Parse one statement file (BAI2/camt.053/MT940/OFX, sniffed) into statement_line rows,
+    behind the #41 ingest data controls:
+
+      byte-identical to a live batch  -> rejected    (no lines; the attempt is recorded)
+      unparseable                     -> rejected    (no lines)
+      a blocking control fails        -> quarantined (lines loaded as evidence, excluded from
+                                                      matching/open items until released)
+      otherwise                       -> committed
+
+    source_account is resolved through the §E map (gl_account.source_account); unmapped
+    accounts are reported as a warning control, not silently dropped."""
+    from adapters import formats
+    from adapters.formats import controls
+    content = _read_import(name, import_dir)
+    sha = controls.sha256(content)
+    note = "statement-line ingest (#34)"
+
+    dup = _duplicate_of(c, sha)
+    if dup:
+        return _reject(c, name, created_by, note, sha, _duplicate_result(dup)) | {"duplicate_of": dup["id"]}
+    try:
+        fmt = formats.detect(content)
+        parsed = list(formats.parse(content, fmt))
+    except Exception as e:                        # any parser failure is a refusal, never a 500
+        return _reject(c, name, created_by, note, sha, controls.ControlResult(
+            "file.parse", "file", controls.FAIL, controls.BLOCKING, detail=str(e)[:500]))
+
+    results = controls.evaluate(content, fmt, parsed)
     amap = {r["source_account"]: r["id"] for r in
             c.execute("SELECT id, source_account FROM gl_account WHERE source_account IS NOT NULL").fetchall()}
-    batch = new_batch_id()
-    c.execute("INSERT INTO import_batch (id, source, created_by, note) VALUES (%s,%s,%s,%s)",
-              (batch, name, created_by, "statement-line ingest (#34)"))
-    loaded, unmapped, balances = 0, [], []
+    unmapped = sorted({ps.source_account for ps in parsed if ps.source_account not in amap})
+    results.append(_unmapped_result(unmapped, len(parsed)))
+    status = controls.outcome(results)
+
+    batch = _open_batch(c, name, created_by, note, sha, status)
+    loaded, balances = 0, []
     for ps in parsed:
         gl_id = amap.get(ps.source_account)
         if not gl_id:
-            unmapped.append(ps.source_account)
             continue
         for ln in ps.lines:
             c.execute("""INSERT INTO statement_line
@@ -164,16 +247,22 @@ def ingest_statement_file(c, name: str, created_by: str, import_dir: str | None 
                          "as_of": ps.as_of.isoformat() if ps.as_of else None,
                          "ties_internally": ps.ties()})
     c.execute("UPDATE import_batch SET rows_loaded=%s WHERE id=%s", (loaded, batch))
-    return {"batch": batch, "accounts_parsed": len(parsed), "lines_loaded": loaded,
-            "unmapped_source_accounts": sorted(set(unmapped)), "statement_balances": balances}
+    return {"batch": batch, "status": status, "format": fmt, "accounts_parsed": len(parsed),
+            "lines_loaded": loaded, "unmapped_source_accounts": unmapped,
+            "statement_balances": balances, **_control_summary(_record_controls(c, batch, results))}
 
 
 def ingest_csv_with_profile(c, name: str, profile_name: str, created_by: str,
-                            import_dir: str | None = None) -> dict:
+                            import_dir: str | None = None, expected_rows: int | None = None,
+                            control_total: float | None = None) -> dict:
     """Ingest a CSV statement export through a saved mapping profile (#37 csvmap).
     Only the 'statement' target lands here (statement_line rows); other targets are
-    consumed by their adapters at reconcile time."""
-    from adapters.formats import csvmap
+    consumed by their adapters at reconcile time.
+
+    CSV carries no bank-supplied integrity evidence, so the #41 controls are: duplicate file,
+    rows that failed to parse (a partial file quarantines rather than loading silently), and
+    optional operator-declared expected row count / control total."""
+    from adapters.formats import controls, csvmap
     row = c.execute("SELECT target, config FROM mapping_profile WHERE name=%s AND active",
                     (profile_name,)).fetchone()
     if not row:
@@ -181,23 +270,29 @@ def ingest_csv_with_profile(c, name: str, profile_name: str, created_by: str,
     if row["target"] != "statement":
         raise ValueError(f"profile '{profile_name}' targets '{row['target']}', not statement")
     profile = csvmap.MappingProfile.from_dict(row["config"])
-    import_dir = import_dir or os.environ.get("IMPORT_DIR", "/samples")
-    path = os.path.join(import_dir, os.path.basename(name))
-    if not os.path.exists(path):
-        raise FileNotFoundError(name)
-    with open(path, "rb") as f:
-        parsed = csvmap.parse_csv(f.read(), profile)
+    content = _read_import(name, import_dir)
+    sha = controls.sha256(content)
+    note = f"csv statement ingest via profile '{profile_name}' (#37)"
 
+    dup = _duplicate_of(c, sha)
+    if dup:
+        return (_reject(c, name, created_by, note, sha, _duplicate_result(dup))
+                | {"profile": profile_name, "duplicate_of": dup["id"]})
+    parsed = csvmap.parse_csv(content, profile)
+
+    results = controls.csv_controls(parsed, expected_rows, control_total)
     amap = {r["source_account"]: r["id"] for r in
             c.execute("SELECT id, source_account FROM gl_account WHERE source_account IS NOT NULL").fetchall()}
-    batch = new_batch_id()
-    c.execute("INSERT INTO import_batch (id, source, created_by, note) VALUES (%s,%s,%s,%s)",
-              (batch, name, created_by, f"csv statement ingest via profile '{profile_name}' (#37)"))
-    loaded, unmapped = 0, []
+    sources = {r["source_account"] for r in parsed["rows"]}
+    unmapped = sorted(a for a in sources if a not in amap)
+    results.append(_unmapped_result(unmapped, len(sources)))
+    status = controls.outcome(results)
+
+    batch = _open_batch(c, name, created_by, note, sha, status)
+    loaded = 0
     for r in parsed["rows"]:
         gl_id = amap.get(r["source_account"])
         if not gl_id:
-            unmapped.append(r["source_account"])
             continue
         c.execute("""INSERT INTO statement_line
                        (gl_account_id, stmt_date, amount, description, bank_ref, import_batch_id)
@@ -206,9 +301,32 @@ def ingest_csv_with_profile(c, name: str, profile_name: str, created_by: str,
                    r.get("bank_ref") or None, batch))
         loaded += 1
     c.execute("UPDATE import_batch SET rows_loaded=%s WHERE id=%s", (loaded, batch))
-    return {"batch": batch, "profile": profile_name, "lines_loaded": loaded,
-            "row_errors": parsed["errors"][:25],
-            "unmapped_source_accounts": sorted(set(unmapped))}
+    return {"batch": batch, "status": status, "profile": profile_name, "lines_loaded": loaded,
+            "row_errors": parsed["errors"][:25], "unmapped_source_accounts": unmapped,
+            **_control_summary(_record_controls(c, batch, results))}
+
+
+def batch_controls(c, batch_id: str) -> Optional[dict]:
+    b = c.execute("""SELECT id, source, created_by, created_at, status, rows_loaded, note,
+                            content_sha256, released_by, released_at, release_reason
+                     FROM import_batch WHERE id=%s""", (batch_id,)).fetchone()
+    if not b:
+        return None
+    rows = c.execute("""SELECT control, scope, status, severity, expected, actual, detail
+                        FROM ingest_control_result WHERE import_batch_id=%s ORDER BY id""",
+                     (batch_id,)).fetchall()
+    return {"batch": b, **_control_summary(rows)}
+
+
+def release_batch(c, batch_id: str, releaser: str, reason: str) -> Optional[dict]:
+    """Quarantined -> committed. The caller (API) enforces who may release; this guards the state
+    transition itself so a concurrent release or rollback can't double-apply."""
+    return c.execute(
+        """UPDATE import_batch SET status='committed', released_by=%s, released_at=now(),
+                  release_reason=%s
+           WHERE id=%s AND status='quarantined'
+           RETURNING id, source, created_by, rows_loaded, released_at""",
+        (releaser, reason, batch_id)).fetchone()
 
 
 def rollback_batch(c, batch_id: str) -> dict:
@@ -220,10 +338,15 @@ def rollback_batch(c, batch_id: str) -> dict:
 def _unmatched(c, table: str, id_col: str, gl_account_id: str, period_end: date) -> list[dict]:
     date_col = "txn_date" if table == "gl_transaction" else "stmt_date"
     ref_col = "doc_ref" if table == "gl_transaction" else "bank_ref"
+    # #41: statement lines from a quarantined / rejected / rolled-back batch never feed matching
+    batch_gate = ("" if table == "gl_transaction" else
+                  """AND (t.import_batch_id IS NULL OR EXISTS (SELECT 1 FROM import_batch b
+                         WHERE b.id = t.import_batch_id AND b.status = 'committed'))""")
     rows = c.execute(
         f"""SELECT t.id, t.amount, t.{date_col} AS date, t.{ref_col} AS ref
             FROM {table} t
             WHERE t.gl_account_id = %s AND t.{date_col} <= %s
+              {batch_gate}
               AND NOT EXISTS (SELECT 1 FROM txn_match_member m
                               JOIN txn_match x ON x.id = m.match_id
                               WHERE m.{id_col} = t.id AND x.status <> 'rejected')

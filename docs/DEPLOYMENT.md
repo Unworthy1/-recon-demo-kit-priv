@@ -124,6 +124,21 @@ Statement accounts resolve through the INTAKE §E `source_account` map; unmapped
 the response, not silently dropped. Every ingest is a provenance batch (`stm-*`) with
 `/api/matching/{batch}/rollback`. No new secrets or external dependencies.
 
+**Ingest data controls (#41).** Every file is checked against the integrity evidence it carries (BAI2
+trailers, camt.053 transaction summary, balance continuity, duplicate SHA-256; CSV row errors and optional
+`expected_rows` / `control_total`). A failed blocking control **quarantines** the batch — lines are stored
+but excluded from matching and open items until a principal/director other than the uploader releases it
+with a reason (`POST /api/matching/{batch}/release`). A byte-identical re-drop is **rejected** with no lines.
+Operational notes:
+- Watched-folder and SFTP transports that re-deliver the same file are now safe: the second copy is a
+  recorded `rejected` batch, not a double load. To deliberately reload a file, roll its batch back first.
+- Monitor the queue with `GET /api/import/batches?status=quarantined` — a quarantined file blocks nothing
+  else, so it can sit unnoticed.
+- If a bank's files quarantine routinely on `bai2.*_trailer`, capture a sample and check its trailer
+  convention before releasing in bulk; the control accepts both common sign conventions.
+- Schema: `18-ingest-controls.sql` runs on first init. Existing databases apply it once with
+  `psql -f stack/db/18-ingest-controls.sql` (additive; existing batches keep `committed`).
+
 ### Spot-check this guide every release
 This document is only worth anything if it stays true to the code. **At every feature close / wrap-up,
 spot-check this guide** against what you just shipped — did the feature introduce a new surface, a migration
