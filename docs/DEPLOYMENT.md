@@ -152,6 +152,21 @@ Apply one per ingest with `?prep=<name>`, or set a CSV mapping profile's `prep` 
 - Watched-folder / SFTP transports feeding `fetch_lines()` do not run rule sets yet; use the ingest API.
 - Schema: `19-prep-rules.sql` (additive) — apply once to existing databases after 18.
 
+**Proposed journal entries (#43).** OpenRecon drafts entries from reconciling items; people approve them;
+an export file carries them to the ERP. Nothing posts automatically and there is no ERP write-back.
+Operational notes:
+- **Set the offset accounts before first use.** The seeded `je_offset_rule` rows use placeholder codes
+  (6510 bank charges, 4910 interest income, 5990 purchase price variance, 9999 suspense). Replace them
+  with the customer's chart of accounts (INTAKE §E); GR/IR reversals use each PO's own GL account.
+- **Shape the export to the ERP's journal import** with `POST /api/journal/export-profiles` (columns,
+  date format, delimiter, signed-amount convention) and test one file against the ERP before go-live.
+  The seeded `generic-csv` is a debit/credit layout.
+- Exports are stored in the database (`je_export.content`) with their hash; hand the file to the ERP
+  import job, and treat a re-download as the same file, not a new batch. Entries in an export can't be
+  voided — reverse them in the ERP.
+- Locked periods (`close_period.status='locked'`) refuse new, submitted and approved entries.
+- Schema: `20-journal-entries.sql` (additive; triggers enforce balance, immutability and status flow).
+
 ### Spot-check this guide every release
 This document is only worth anything if it stays true to the code. **At every feature close / wrap-up,
 spot-check this guide** against what you just shipped — did the feature introduce a new surface, a migration

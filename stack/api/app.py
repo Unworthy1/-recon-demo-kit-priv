@@ -11,7 +11,7 @@ from datetime import date
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -21,6 +21,7 @@ import notify
 import auth
 import etl
 import matching
+import journal
 import projects.funding_map as fmap
 from ferc.classifier import FERCClassifier
 
@@ -672,6 +673,225 @@ def matching_ingest(source: str, profile: str = None, user: str = "Robert K.",
     return res
 
 
+# ═══════════════════════════ #43 proposed journal entries (free tier) ═══════════════════════════
+def _je_caps(c, request, user, capability):
+    actor, role, ip = actor_of(c, request, user)
+    caps = _user_caps(c, actor)
+    if not caps or capability not in caps["capabilities"]:
+        raise HTTPException(403, f"this journal action requires {capability} capability")
+    return caps, ip
+
+
+def _je_commit(c):
+    """Commit, translating the database's accounting invariants into client errors — the DB is the
+    last line of defence behind journal.validate_lines()."""
+    try:
+        c.commit()
+    except psycopg.errors.CheckViolation as e:
+        c.rollback()
+        raise HTTPException(409, str(e).splitlines()[0])
+    except psycopg.errors.UniqueViolation:
+        c.rollback()
+        raise HTTPException(409, "that reconciling item already has a live journal entry")
+
+
+def _je_call(fn, *a, **kw):
+    try:
+        return fn(*a, **kw)
+    except journal.JournalError as e:
+        raise HTTPException(e.code, str(e))
+
+
+@app.get("/api/journal/entries")
+def journal_entries(status: str = None, account: str = None, period: str = None, limit: int = 200):
+    where, args = [], []
+    if status:
+        where.append("status=%s"); args.append(status)
+    if account:
+        where.append("gl_account_id=%s"); args.append(account)
+    if period:
+        where.append("period_end=%s"); args.append(_period_of(period))
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    with db() as c:
+        ids = [r["id"] for r in c.execute(f"SELECT id FROM journal_entry {clause} ORDER BY id DESC LIMIT %s",
+                                          [*args, max(1, min(limit, 1000))]).fetchall()]
+        return {"entries": [journal.get_entry(c, i) for i in ids]}
+
+
+@app.get("/api/journal/entries/{entry_id}")
+def journal_entry(entry_id: int):
+    with db() as c:
+        e = journal.get_entry(c, entry_id)
+    if not e:
+        raise HTTPException(404, "entry not found")
+    return e
+
+
+@app.post("/api/journal/entries")
+def journal_create(request: Request = None, user: str = "Joe B.", body: dict = None):
+    """A manual entry on a reconciliation: {period_end, memo, gl_account_id?, rationale?, lines: [...]}."""
+    with db() as c:
+        caps, ip = _je_caps(c, request, user, "prepare")
+        eid = _je_call(journal.create_manual, c, body or {}, caps["name"])
+        e = journal.get_entry(c, eid)
+        audit(c, caps["name"], "journal.create", entity_type="journal_entry", entity_id=e["entry_number"],
+              period_end=_period_of(e["period_end"]), after={"lines": e["lines"], "memo": e["memo"]},
+              detail={"source_kind": "manual"}, actor_role=caps["org_role"], ip=ip)
+        _je_commit(c)
+    return e
+
+
+@app.post("/api/account/{account_id}/journal/propose")
+def journal_propose(account_id: str, period: str = None, user: str = "Joe B.", request: Request = None):
+    """Draft entries for this reconciliation's reconciling items: unbooked statement lines (offset
+    per je_offset_rule) and an unexplained residual. Idempotent — items with a live entry are skipped."""
+    pe = _period_of(period)
+    with db() as c:
+        caps, ip = _je_caps(c, request, user, "prepare")
+        items = matching.open_items(c, account_id, pe)
+        res = _je_call(journal.propose_for_account, c, account_id, pe, caps["name"], items)
+        for eid in res["created"]:
+            audit(c, caps["name"], "journal.propose", entity_type="journal_entry", entity_id=journal.entry_number(eid),
+                  period_end=pe, detail={"account": account_id}, actor_role=caps["org_role"], ip=ip)
+        _je_commit(c)
+        res["entries"] = [journal.get_entry(c, i) for i in res.pop("created")]
+    return res
+
+
+@app.post("/api/journal/propose-grir")
+def journal_propose_grir(period: str = None, min_age_days: int = 90, user: str = "Joe B.", request: Request = None):
+    """Draft clearing entries for GR/IR residues with no activity for min_age_days (write-offs — review)."""
+    pe = _period_of(period)
+    with db() as c:
+        caps, ip = _je_caps(c, request, user, "prepare")
+        res = _je_call(journal.propose_for_grir, c, pe, caps["name"], max(0, min_age_days))
+        for eid in res["created"]:
+            audit(c, caps["name"], "journal.propose", entity_type="journal_entry", entity_id=journal.entry_number(eid),
+                  period_end=pe, detail={"source": "grir", "min_age_days": min_age_days},
+                  actor_role=caps["org_role"], ip=ip)
+        _je_commit(c)
+        res["entries"] = [journal.get_entry(c, i) for i in res.pop("created")]
+    return res
+
+
+@app.put("/api/journal/entries/{entry_id}/lines")
+def journal_edit_lines(entry_id: int, user: str = "Joe B.", request: Request = None, body: dict = None):
+    """Replace a draft's lines (e.g. reclassify a suspense offset). {lines: [...]}"""
+    with db() as c:
+        caps, ip = _je_caps(c, request, user, "prepare")
+        diff = _je_call(journal.replace_lines, c, entry_id, (body or {}).get("lines"), caps["name"])
+        audit(c, caps["name"], "journal.edit", entity_type="journal_entry", entity_id=journal.entry_number(entry_id),
+              before={"lines": diff["before"]}, after={"lines": diff["after"]}, actor_role=caps["org_role"], ip=ip)
+        _je_commit(c)
+        return journal.get_entry(c, entry_id)
+
+
+def _je_step(entry_id, new, capability, user, request, reason=""):
+    with db() as c:
+        caps, ip = _je_caps(c, request, user, capability)
+        before = journal.get_entry(c, entry_id)
+        res = _je_call(journal.transition, c, entry_id, new, caps["name"], reason)
+        audit(c, caps["name"], {"submitted": "journal.submit", "approved": "journal.approve",
+                                "draft": "journal.return", "void": "journal.void"}[new],
+              entity_type="journal_entry", entity_id=res["entry_number"],
+              period_end=_period_of(before["period_end"]), before={"status": res["from"]}, after={"status": new},
+              detail={"reason": reason or None, "preparer": before["created_by"],
+                      "totals": before["totals"]}, actor_role=caps["org_role"], ip=ip)
+        _je_commit(c)
+        return journal.get_entry(c, entry_id)
+
+
+@app.post("/api/journal/entries/{entry_id}/submit")
+def journal_submit(entry_id: int, user: str = "Joe B.", request: Request = None):
+    return _je_step(entry_id, "submitted", "prepare", user, request)
+
+
+@app.post("/api/journal/entries/{entry_id}/approve")
+def journal_approve(entry_id: int, user: str = "Maria L.", request: Request = None):
+    """Maker-checker: approve capability, and never the entry's creator or submitter."""
+    return _je_step(entry_id, "approved", "approve", user, request)
+
+
+@app.post("/api/journal/entries/{entry_id}/return")
+def journal_return(entry_id: int, reason: str = "", user: str = "Maria L.", request: Request = None):
+    return _je_step(entry_id, "draft", "approve", user, request, reason)
+
+
+@app.post("/api/journal/entries/{entry_id}/void")
+def journal_void(entry_id: int, reason: str = "", user: str = "Joe B.", request: Request = None):
+    """Drafts can be voided by a preparer; submitted/approved entries need approve capability.
+    Exported entries can't be voided here — reverse them in the ERP."""
+    with db() as c:
+        e = c.execute("SELECT status FROM journal_entry WHERE id=%s", (entry_id,)).fetchone()
+    need = "prepare" if e and e["status"] == "draft" else "approve"
+    return _je_step(entry_id, "void", need, user, request, reason)
+
+
+@app.get("/api/journal/export-profiles")
+def journal_export_profiles():
+    with db() as c:
+        return {"profiles": c.execute("SELECT name, config, active, created_by, updated_at FROM je_export_profile ORDER BY name").fetchall()}
+
+
+@app.post("/api/journal/export-profiles")
+def journal_export_profile_save(user: str = "Robert K.", request: Request = None, body: dict = None):
+    """Upsert an outbound layout {name, config: {columns, date_format, delimiter, include_header,
+    amount_sign, line_ending}} — the inverse of a #37 mapping profile."""
+    body = body or {}
+    name = (body.get("name") or "").strip()
+    errs = ([] if name else ["name is required"]) + journal.validate_profile(body.get("config"))
+    if errs:
+        raise HTTPException(400, "; ".join(errs))
+    with db() as c:
+        caps, ip = _je_caps(c, request, user, "approve")
+        before = c.execute("SELECT config FROM je_export_profile WHERE name=%s", (name,)).fetchone()
+        c.execute("""INSERT INTO je_export_profile (name, config, created_by) VALUES (%s,%s,%s)
+                     ON CONFLICT (name) DO UPDATE SET config=EXCLUDED.config, active=true, updated_at=now()""",
+                  (name, Json(body["config"]), caps["name"]))
+        audit(c, caps["name"], "journal.export_profile.save", entity_type="je_export_profile", entity_id=name,
+              before=dict(before) if before else None, after={"config": body["config"]},
+              actor_role=caps["org_role"], ip=ip)
+        c.commit()
+    return {"saved": name}
+
+
+@app.post("/api/journal/export")
+def journal_export(profile: str = "generic-csv", user: str = "Maria L.", request: Request = None, body: dict = None):
+    """Render approved entries (all waiting, or {entry_ids: [...]}) into one stored export file and
+    mark them exported. Download with GET /api/journal/exports/{id}/file."""
+    with db() as c:
+        caps, ip = _je_caps(c, request, user, "approve")
+        res = _je_call(journal.export, c, profile, caps["name"], (body or {}).get("entry_ids"))
+        audit(c, caps["name"], "journal.export", entity_type="je_export", entity_id=str(res["export"]),
+              detail={k: res[k] for k in ("profile", "entries", "line_count", "sha256")},
+              actor_role=caps["org_role"], ip=ip)
+        _je_commit(c)
+    return res
+
+
+@app.get("/api/journal/exports")
+def journal_exports():
+    with db() as c:
+        return {"exports": c.execute("""SELECT id, profile_name, created_by, created_at, entry_count, line_count,
+                                               content_sha256 FROM je_export ORDER BY id DESC""").fetchall()}
+
+
+@app.get("/api/journal/exports/{export_id}/file")
+def journal_export_file(export_id: int, user: str = "Maria L.", request: Request = None):
+    """The stored file, byte-identical every time. Each download is audited (re-export)."""
+    with db() as c:
+        actor, role, ip = actor_of(c, request, user)
+        ex = c.execute("SELECT id, content, content_sha256, entry_count FROM je_export WHERE id=%s", (export_id,)).fetchone()
+        if not ex:
+            raise HTTPException(404, "export not found")
+        audit(c, actor, "journal.export.download", entity_type="je_export", entity_id=str(export_id),
+              detail={"sha256": ex["content_sha256"]}, actor_role=role, ip=ip)
+        c.commit()
+    return Response(content=ex["content"].encode("utf-8"), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="journal-export-{export_id}.csv"',
+                             "X-Content-SHA256": ex["content_sha256"]})
+
+
 # ─────────────── #42 prep rules: named rule sets, dry-run preview, line explanations ───────────────
 @app.get("/api/prep-rulesets")
 def prep_rulesets():
@@ -916,9 +1136,16 @@ def match_decide(match_id: int, decision: str, user: str = "Joe B.", request: Re
 
 @app.get("/api/account/{account_id}/open-items")
 def account_open_items(account_id: str, period: str = None):
-    """The aged open items behind the account's variance + the tie-out assertion."""
+    """The aged open items behind the account's variance + the tie-out assertion. Statement-side
+    items that already carry a live #43 journal entry say so (`entry`)."""
     with db() as c:
-        return matching.open_items(c, account_id, _period_of(period))
+        res = matching.open_items(c, account_id, _period_of(period))
+        live = {r["source_ref"]: {"id": r["id"], "entry_number": journal.entry_number(r["id"]), "status": r["status"]}
+                for r in c.execute("""SELECT id, source_ref, status FROM journal_entry
+                                      WHERE source_kind='stmt_open_item' AND status <> 'void'""").fetchall()}
+        for it in res["items"]:
+            it["entry"] = live.get(str(it["id"])) if it["side"] == "stmt" else None
+        return res
 
 
 # ═══════════════════════════ project funding-allocation map (#23) ═══════════════════════════

@@ -619,7 +619,14 @@ RECON.matching = {
     open:[{side:"stmt", date:"2026-05-27", ref:"FEE-ANNUAL", desc:"Annual card fee — not yet booked in GL", amt:-2500.00, age:"0-30",
       prep:{ruleset:"amex-card-export", steps:[
         {rule:3, op:"extract", label:"fee code from memo", field:"bank_ref", before:"", after:"ANNUAL"},
-        {rule:4, op:"concat", label:"GL fee refs are FEE-xxxx", field:"bank_ref", before:"ANNUAL", after:"FEE-ANNUAL"}]}}]},
+        {rule:4, op:"concat", label:"GL fee refs are FEE-xxxx", field:"bank_ref", before:"ANNUAL", after:"FEE-ANNUAL"}]},
+      // #43 proposed journal entry: the engine drafted it from this open item; a person approves it,
+      // never the one who prepared or submitted it, and an export hands it to the ERP.
+      entry:{number:"JE-000014", status:"submitted", prepared_by:"Joe B.", submitted_by:"Joe B.",
+        memo:"Book unrecorded bank item — Annual card fee",
+        rationale:"Statement line FEE-ANNUAL for -2,500.00 has no ledger match. Offset 6510 chosen by rule /fee/.",
+        lines:[{account:"6510", name:"Bank service charges", debit:2500.00, credit:0},
+               {account:"2020", name:"Corporate cards — Amex", debit:0, credit:2500.00}]}}]},
   // intercompany UK: only $8,000 of the $11,500 variance is explained — the badge goes amber.
   "2710": {exact:9, rule:1, suggestions:[],
     open:[{side:"gl", date:"2026-05-29", ref:"WIRE-IC-88", desc:"IC wire in transit to UK", amt:8000.00, age:"0-30"}]}
@@ -666,6 +673,17 @@ function _matchCss(){
   .mtcprep{font:inherit;font-size:10.5px;font-weight:700;border-radius:20px;padding:2px 8px;border:1px solid #CFD6EA;background:#F3F5FB;color:#43506E;cursor:pointer}
   .mtcexp{margin:4px 0 0 56px;padding:8px 12px;border-left:3px solid #CFD6EA;font-size:12px;color:var(--muted)}
   .mtcexp div{margin-top:3px} .mtcexp code{font-size:11px;background:#F3F5FB;border-radius:5px;padding:1px 5px;color:#43506E}
+  .mtcje{margin-top:14px;border:1px solid #CFD6EA;border-radius:12px;background:#FAFBFE;padding:12px 14px}
+  .mtcje .jh{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:700;flex-wrap:wrap}
+  .mtcje .js{font-size:10.5px;font-weight:800;letter-spacing:.3px;border-radius:20px;padding:2px 9px;text-transform:uppercase}
+  .mtcje .js.submitted{background:#FBF0DA;color:#8A5A00} .mtcje .js.approved{background:var(--greenbg);color:var(--green)} .mtcje .js.draft{background:var(--slatebg);color:var(--slate)}
+  .mtcje .jw{font-size:12px;color:var(--muted);margin-top:4px}
+  .mtcje table{width:100%;border-collapse:collapse;margin-top:9px;font-size:12.5px}
+  .mtcje td{padding:5px 6px;border-top:1px solid var(--line)} .mtcje td.n{text-align:right;font-variant-numeric:tabular-nums;width:110px}
+  .mtcje .jf{display:flex;gap:9px;align-items:center;margin-top:10px;flex-wrap:wrap}
+  .mtcje .jf input{flex:1;min-width:180px;font:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:9px;padding:7px 10px}
+  .mtcje .jn{font-size:12px;color:var(--muted);margin-top:9px}
+  .mtcjechip{font-size:10.5px;font-weight:700;border-radius:20px;padding:2px 8px;background:#EEF1FA;color:#43506E;white-space:nowrap}
   .mtcq{margin-top:14px;border:1px solid #E8B4AE;border-radius:12px;background:#FDF3F2;padding:12px 14px}
   .mtcq .qh{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:700;color:#A23B34;flex-wrap:wrap}
   .mtcq .qs{font-size:12.5px;color:#6B3A36;margin-top:4px}
@@ -721,9 +739,31 @@ function renderMatching(hostId, acct){
       <span class="sd ${o.side==='gl'?'gl':'bk'}">${o.side==='gl'?'GL':'BANK'}</span>
       <span class="dt">${o.date}</span>
       <span class="ds">${o.desc}<span>${o.ref}</span></span>
+      ${o.entry ? `<span class="mtcjechip" title="Proposed journal entry">📒 ${o.entry.number} · ${o.entry.status}</span>` : ''}
       ${o.prep ? `<button class="mtcprep" title="Which prep rules shaped this line" onclick="const e=document.getElementById('exp-${o.ref}'); e.hidden=!e.hidden">⚙ ${o.prep.steps.length} rule${o.prep.steps.length>1?'s':''}</button>` : ''}
       <span class="mtcage${o.age==='0-30'?'':' old'}">${o.age}</span>
       <span class="am">${money(o.amt)}</span></div>${prepHtml(o)}`;
+  const jeHtml = m.open.filter(o => o.entry && o.entry.status !== 'exported').map(o => {
+    const e = o.entry, viewer = RECON.viewer;
+    const fmt = v => v ? money(v) : '';
+    let action;
+    if (e.status !== 'submitted') {
+      action = `<div class="jn">${e.status === 'approved' ? `✓ Approved by ${e.approved_by} — waiting for the next export to the ERP.` : 'Draft — the preparer submits it for approval.'}</div>`;
+    } else if (!can(viewerRole(), 'approve')) {
+      action = `<div class="jn">Waiting for approval by a senior or above.</div>`;
+    } else if (viewer === e.prepared_by || viewer === e.submitted_by) {
+      action = `<div class="jn">Segregation of duties: you prepared this entry, so someone else must approve it.</div>`;
+    } else {
+      action = `<div class="jf"><input id="jr-${e.number}" placeholder="Reason (required to return)">
+        <button class="mtcbtn" onclick="jeDecide('${acct.id}','${e.number}','return','${hostId}')">Return</button>
+        <button class="mtcbtn pri" onclick="jeDecide('${acct.id}','${e.number}','approve','${hostId}')">Approve entry</button></div>`;
+    }
+    return `<div class="mtcje"><div class="jh">📒 Proposed entry ${e.number}<span class="js ${e.status}">${e.status}</span>
+        <span style="flex:1"></span><span class="mtcchip">prepared by ${e.prepared_by}</span></div>
+      <div class="jw">${e.memo}. ${e.rationale} Never posted automatically — an approved entry is exported to the ERP as a file.</div>
+      <table>${e.lines.map(l => `<tr><td>${l.account}</td><td>${l.name}</td><td class="n">${fmt(l.debit)}</td><td class="n">${fmt(l.credit)}</td></tr>`).join('')}</table>
+      ${action}</div>`;
+  }).join('');
   const openHtml = m.open.length ? m.open.map(rowHtml).join('')
     : `<p class="mtcnote">No open items — every ledger and statement line for this period is matched.</p>`;
   const sugHtml = m.suggestions.map(s => `<div class="mtcsug" id="sug-${s.id}">
@@ -742,6 +782,7 @@ function renderMatching(hostId, acct){
     ${qHtml}
     ${badge}
     ${openHtml}
+    ${jeHtml}
     ${sugHtml}
     <div class="mtcnote">${m.exact} exact · ${m.rule} by rule — rules (amount tolerance, date window, check-number patterns) are configuration, not code.</div>
   </div>`;
@@ -756,6 +797,25 @@ function matchDecide(sugId, decision){
   if (typeof frToast === 'function')
     frToast(decision==='confirm' ? 'Match confirmed' : 'Suggestion rejected',
             decision==='confirm' ? 'Audited as manual match — the engine never decides alone.' : 'The lines stay open for a future statement.');
+}
+
+function jeDecide(acctId, number, decision, hostId){
+  const m = RECON.matching[acctId], acct = RECON.accounts.find(a => a.id === acctId);
+  const o = m && m.open.find(x => x.entry && x.entry.number === number);
+  if (!o || !acct) return;
+  if (decision === 'return') {
+    const input = document.getElementById('jr-' + number);
+    const reason = (input && input.value || '').trim();
+    if (!reason) { if (input) { input.focus(); input.style.borderColor = '#A23B34'; }
+      if (typeof frToast === 'function') frToast('Reason required', 'Say what the preparer needs to fix.'); return; }
+    o.entry.status = 'draft'; o.entry.submitted_by = null; o.entry.return_reason = reason;
+  } else {
+    o.entry.status = 'approved'; o.entry.approved_by = RECON.viewer;
+  }
+  renderMatching(hostId, acct);
+  if (typeof frToast === 'function')
+    frToast(decision === 'approve' ? `${number} approved` : `${number} returned`,
+            decision === 'approve' ? `Audited to ${RECON.viewer}. It goes out in the next ERP export.` : 'Back to the preparer as a draft, with your reason.');
 }
 
 function releaseQuarantine(acctId, batch, hostId){
@@ -777,5 +837,5 @@ function releaseQuarantine(acctId, batch, hostId){
 
 if (typeof window !== 'undefined') {
   window.renderMatching = renderMatching; window.matchDecide = matchDecide;
-  window.releaseQuarantine = releaseQuarantine;
+  window.releaseQuarantine = releaseQuarantine; window.jeDecide = jeDecide;
 }
