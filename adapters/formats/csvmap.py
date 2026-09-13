@@ -43,11 +43,12 @@ class MappingProfile:
     skip_rows: int = 0                            # junk lines above the header
     sign_flip: bool = False                       # export uses the opposite sign convention
     account_default: Optional[str] = None         # single-account files with no account column
+    prep: Optional[str] = None                    # default #42 prep rule set applied after mapping
 
     def to_dict(self) -> dict:
         return {k: getattr(self, k) for k in (
             "name", "target", "columns", "date_format", "decimal_comma",
-            "debit_col", "credit_col", "skip_rows", "sign_flip", "account_default")}
+            "debit_col", "credit_col", "skip_rows", "sign_flip", "account_default", "prep")}
 
     @classmethod
     def from_dict(cls, d: dict) -> "MappingProfile":

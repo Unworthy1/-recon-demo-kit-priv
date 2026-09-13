@@ -633,14 +633,17 @@ def _period_of(period: str | None) -> date:
 
 @app.post("/api/matching/ingest")
 def matching_ingest(source: str, profile: str = None, user: str = "Robert K.",
-                    expected_rows: int = None, control_total: float = None, request: Request = None):
+                    expected_rows: int = None, control_total: float = None, prep: str = None,
+                    request: Request = None):
     """Parse a statement file into statement lines: bank formats (BAI2/camt.053/MT940/OFX)
     are sniffed automatically; a CSV export goes through a saved mapping profile (?profile=name).
 
     #41 ingest data controls run on every file. The response always carries `status`:
     committed (feeds matching) · quarantined (a blocking control failed — loaded as evidence,
     excluded from matching until a reviewer releases it) · rejected (duplicate or unparseable —
-    nothing loaded). CSV only: ?expected_rows= / ?control_total= declare totals to prove."""
+    nothing loaded). CSV only: ?expected_rows= / ?control_total= declare totals to prove.
+    #42: ?prep=<rule set> transforms lines after the controls and before load (a CSV profile may
+    name a default rule set)."""
     if (expected_rows is not None or control_total is not None) and not profile:
         raise HTTPException(400, "expected_rows / control_total apply to CSV (profile) ingest; "
                                  "bank formats carry their own control totals")
@@ -649,8 +652,8 @@ def matching_ingest(source: str, profile: str = None, user: str = "Robert K.",
         try:
             res = (matching.ingest_csv_with_profile(c, source, profile, actor,
                                                     expected_rows=expected_rows,
-                                                    control_total=control_total) if profile
-                   else matching.ingest_statement_file(c, source, actor))
+                                                    control_total=control_total, prep_name=prep) if profile
+                   else matching.ingest_statement_file(c, source, actor, prep_name=prep))
         except FileNotFoundError:
             raise HTTPException(404, f"source not found: {source}")
         except LookupError as e:
@@ -666,6 +669,78 @@ def matching_ingest(source: str, profile: str = None, user: str = "Robert K.",
                           "duplicate_of": res.get("duplicate_of")},
                   actor_role=role, ip=ip)
         c.commit()
+    return res
+
+
+# ─────────────── #42 prep rules: named rule sets, dry-run preview, line explanations ───────────────
+@app.get("/api/prep-rulesets")
+def prep_rulesets():
+    with db() as c:
+        rows = c.execute("""SELECT name, target, rules, fingerprint, description, active,
+                                   created_by, created_at, updated_by, updated_at
+                            FROM prep_ruleset ORDER BY name""").fetchall()
+    return {"rulesets": rows}
+
+
+@app.post("/api/prep-rulesets")
+def prep_ruleset_save(request: Request = None, user: str = "Robert K.", body: dict = None):
+    """Create or update a rule set (upsert by name). Rules decide what reaches matching — they can
+    rewrite references and drop rows — so saving one needs approve capability (senior+), and the
+    audit event carries the before/after rules."""
+    from adapters.formats import prep as _prep
+    body = body or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "a rule set needs a name")
+    if body.get("target", "statement") != "statement":
+        raise HTTPException(400, "only target 'statement' is supported")
+    rules = body.get("rules")
+    errs = _prep.validate(rules)
+    if errs:
+        raise HTTPException(400, "; ".join(errs))
+    fp = _prep.fingerprint(rules)
+    with db() as c:
+        actor, role, ip = actor_of(c, request, user)
+        caps = _user_caps(c, actor)
+        if not caps or "approve" not in caps["capabilities"]:
+            raise HTTPException(403, "saving a prep rule set requires approve capability (senior or above)")
+        before = c.execute("SELECT rules, fingerprint, active FROM prep_ruleset WHERE name=%s", (name,)).fetchone()
+        c.execute("""INSERT INTO prep_ruleset (name, target, rules, fingerprint, description, created_by, updated_by)
+                     VALUES (%s,'statement',%s,%s,%s,%s,%s)
+                     ON CONFLICT (name) DO UPDATE SET rules=EXCLUDED.rules, fingerprint=EXCLUDED.fingerprint,
+                       description=EXCLUDED.description, active=true, updated_by=EXCLUDED.updated_by,
+                       updated_at=now()""",
+                  (name, Json(rules), fp, body.get("description", ""), caps["name"], caps["name"]))
+        audit(c, caps["name"], "prep_ruleset.save", entity_type="prep_ruleset", entity_id=name,
+              before=dict(before) if before else None, after={"rules": rules, "fingerprint": fp},
+              actor_role=caps["org_role"], ip=ip)
+        c.commit()
+    return {"saved": name, "fingerprint": fp, "rules": len(rules), "created": before is None}
+
+
+@app.post("/api/prep/preview")
+def prep_preview(source: str, profile: str = None, prep: str = None, limit: int = 50, body: dict = None):
+    """Dry run a rule set against a file: before/after rows, trace, drops, errors. Writes nothing.
+    POST {"rules": [...]} to try unsaved rules."""
+    with db() as c:
+        try:
+            return matching.preview_prep(c, source, profile_name=profile, prep_name=prep,
+                                         rules=(body or {}).get("rules"), limit=max(1, min(limit, 500)))
+        except FileNotFoundError:
+            raise HTTPException(404, f"source not found: {source}")
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+
+@app.get("/api/statement-line/{line_id}/explain")
+def statement_line_explain(line_id: int):
+    """Which prep rules changed this line, from the rule-set version its batch actually ran."""
+    with db() as c:
+        res = matching.explain_line(c, line_id)
+    if res is None:
+        raise HTTPException(404, "statement line not found")
     return res
 
 
@@ -757,6 +832,9 @@ def mapping_profile_save(request: Request = None, user: str = "Robert K.", body:
         raise HTTPException(400, "; ".join(errs))
     with db() as c:
         actor, role, ip = actor_of(c, request, user)
+        if prof.prep and not c.execute("SELECT 1 FROM prep_ruleset WHERE name=%s AND active",
+                                       (prof.prep,)).fetchone():
+            raise HTTPException(400, f"profile names prep rule set '{prof.prep}', which does not exist")
         c.execute("""INSERT INTO mapping_profile (name, target, config, created_by)
                      VALUES (%s,%s,%s,%s)
                      ON CONFLICT (name) DO UPDATE SET target=EXCLUDED.target,

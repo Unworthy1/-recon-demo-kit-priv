@@ -139,6 +139,19 @@ Operational notes:
 - Schema: `18-ingest-controls.sql` runs on first init. Existing databases apply it once with
   `psql -f stack/db/18-ingest-controls.sql` (additive; existing batches keep `committed`).
 
+**Prep rules (#42).** Named rule sets transform parsed lines before load — alias bank account ids, pull
+check/lockbox numbers out of memo text into `bank_ref`, compose references, net out fees, drop memo lines.
+Apply one per ingest with `?prep=<name>`, or set a CSV mapping profile's `prep` default. Operational notes:
+- Build rules against real files with `POST /api/prep/preview` first — it writes nothing and shows each
+  row before/after plus what would be dropped or fail.
+- Saving a rule set needs approve capability (senior+) and is audited with the before/after rules.
+  Editing a rule set never rewrites history: loaded lines keep the trace of the version that ran.
+- Filtered rows are kept in `prep_dropped_row`; a row a rule cannot process quarantines the batch (#41).
+- A rule set does not change the duplicate guard — re-ingesting the same file with different rules
+  needs a rollback of the earlier batch first.
+- Watched-folder / SFTP transports feeding `fetch_lines()` do not run rule sets yet; use the ingest API.
+- Schema: `19-prep-rules.sql` (additive) — apply once to existing databases after 18.
+
 ### Spot-check this guide every release
 This document is only worth anything if it stays true to the code. **At every feature close / wrap-up,
 spot-check this guide** against what you just shipped — did the feature introduce a new surface, a migration

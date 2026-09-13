@@ -196,7 +196,92 @@ def _unmapped_result(unmapped: list[str], parsed_accounts: int):
                if unmapped else "every source account maps to a GL account")
 
 
-def ingest_statement_file(c, name: str, created_by: str, import_dir: str | None = None) -> dict:
+# ─────────────────────────── #42 prep rules ───────────────────────────
+
+def load_ruleset(c, name: str) -> dict:
+    row = c.execute("SELECT name, target, rules, fingerprint FROM prep_ruleset WHERE name=%s AND active",
+                    (name,)).fetchone()
+    if not row:
+        raise LookupError(f"no active prep rule set '{name}'")
+    return row
+
+
+def _bank_rows(parsed) -> list[dict]:
+    return [{"source_account": ps.source_account, "currency": ps.currency, "stmt_date": ln.stmt_date,
+             "amount": ln.amount, "description": ln.description, "bank_ref": ln.bank_ref}
+            for ps in parsed for ln in ps.lines]
+
+
+def _csv_rows(parsed_csv: dict) -> list[dict]:
+    return [{k: v for k, v in r.items()} for r in parsed_csv["rows"]]
+
+
+def run_prep(rows: list[dict], ruleset: Optional[dict]) -> dict:
+    """Apply a rule set (or none) and coerce every surviving row to the statement_line contract.
+    Rows a rule or the final coercion can't process land in `errors` and are not loaded."""
+    from adapters.formats import prep
+    rules = ruleset["rules"] if ruleset else []
+    out = prep.apply(rows, rules)
+    final, errors = [], list(out["errors"])
+    for r in out["rows"]:
+        try:
+            final.append(prep.finalize_statement(r))
+        except prep.RuleError as e:
+            errors.append({"row": None, "rule": None, "error": str(e)})
+    return {"rows": final, "dropped": out["dropped"], "errors": errors, "stats": out["stats"],
+            "ruleset": ruleset["name"] if ruleset else None,
+            "fingerprint": ruleset["fingerprint"] if ruleset else None, "rules": rules}
+
+
+def _prep_result(pr: dict):
+    from adapters.formats import controls
+    n = len(pr["errors"])
+    return controls.ControlResult(
+        "prep.row_errors", "file", controls.FAIL if n else controls.PASS, controls.BLOCKING,
+        expected="0", actual=str(n),
+        detail=(f"{n} row(s) could not be processed by rule set '{pr['ruleset']}' and were not loaded: "
+                + "; ".join(e["error"] for e in pr["errors"][:3])) if n
+               else f"rule set '{pr['ruleset']}' processed every row")
+
+
+def _prep_summary(pr: dict) -> Optional[dict]:
+    if not pr["ruleset"]:
+        return None
+    return {"ruleset": pr["ruleset"], "fingerprint": pr["fingerprint"], "rules": pr["rules"],
+            "stats": pr["stats"], "dropped": len(pr["dropped"]), "errors": pr["errors"][:50]}
+
+
+def _load_lines(c, batch: str, rows: list[dict], amap: dict) -> int:
+    from psycopg.types.json import Json
+    loaded = 0
+    for r in rows:
+        gl_id = amap.get(r["source_account"])
+        if not gl_id:
+            continue
+        c.execute("""INSERT INTO statement_line
+                       (gl_account_id, stmt_date, amount, description, bank_ref, import_batch_id, prep_trace)
+                     VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                  (gl_id, r["stmt_date"], r["amount"], r["description"], r["bank_ref"], batch,
+                   Json(r["_trace"]) if r["_trace"] else None))
+        loaded += 1
+    return loaded
+
+
+def _record_prep(c, batch: str, pr: dict) -> Optional[dict]:
+    from psycopg.types.json import Json
+    summary = _prep_summary(pr)
+    if summary is None:
+        return None
+    c.execute("UPDATE import_batch SET prep_summary=%s WHERE id=%s", (Json(summary), batch))
+    for d in pr["dropped"]:
+        c.execute("""INSERT INTO prep_dropped_row (import_batch_id, source_row, rule_index, rule_label, data)
+                     VALUES (%s,%s,%s,%s,%s)""",
+                  (batch, d["row"], d["rule"], d["label"], Json(d["data"])))
+    return {k: summary[k] for k in ("ruleset", "fingerprint", "stats", "dropped", "errors")}
+
+
+def ingest_statement_file(c, name: str, created_by: str, import_dir: str | None = None,
+                          prep_name: str | None = None) -> dict:
     """Parse one statement file (BAI2/camt.053/MT940/OFX, sniffed) into statement_line rows,
     behind the #41 ingest data controls:
 
@@ -206,10 +291,13 @@ def ingest_statement_file(c, name: str, created_by: str, import_dir: str | None 
                                                       matching/open items until released)
       otherwise                       -> committed
 
-    source_account is resolved through the §E map (gl_account.source_account); unmapped
-    accounts are reported as a warning control, not silently dropped."""
+    Controls judge the file as the bank sent it; an optional #42 prep rule set (prep_name) then
+    transforms the lines before load. source_account is resolved through the §E map
+    (gl_account.source_account) after prep, so a lookup rule can alias bank account ids;
+    unmapped accounts are reported as a warning control, not silently dropped."""
     from adapters import formats
     from adapters.formats import controls
+    ruleset = load_ruleset(c, prep_name) if prep_name else None
     content = _read_import(name, import_dir)
     sha = controls.sha256(content)
     note = "statement-line ingest (#34)"
@@ -225,43 +313,39 @@ def ingest_statement_file(c, name: str, created_by: str, import_dir: str | None 
             "file.parse", "file", controls.FAIL, controls.BLOCKING, detail=str(e)[:500]))
 
     results = controls.evaluate(content, fmt, parsed)
+    pr = run_prep(_bank_rows(parsed), ruleset)
+    if ruleset:
+        results.append(_prep_result(pr))
     amap = {r["source_account"]: r["id"] for r in
             c.execute("SELECT id, source_account FROM gl_account WHERE source_account IS NOT NULL").fetchall()}
-    unmapped = sorted({ps.source_account for ps in parsed if ps.source_account not in amap})
-    results.append(_unmapped_result(unmapped, len(parsed)))
+    accounts = {r["source_account"] for r in pr["rows"]} | {ps.source_account for ps in parsed if not ps.lines}
+    unmapped = sorted(a for a in accounts if a not in amap)
+    results.append(_unmapped_result(unmapped, len(accounts)))
     status = controls.outcome(results)
 
     batch = _open_batch(c, name, created_by, note, sha, status)
-    loaded, balances = 0, []
-    for ps in parsed:
-        gl_id = amap.get(ps.source_account)
-        if not gl_id:
-            continue
-        for ln in ps.lines:
-            c.execute("""INSERT INTO statement_line
-                           (gl_account_id, stmt_date, amount, description, bank_ref, import_batch_id)
-                         VALUES (%s,%s,%s,%s,%s,%s)""",
-                      (gl_id, ln.stmt_date, ln.amount, ln.description, ln.bank_ref, batch))
-            loaded += 1
-        balances.append({"account": gl_id, "closing": ps.closing,
-                         "as_of": ps.as_of.isoformat() if ps.as_of else None,
-                         "ties_internally": ps.ties()})
+    loaded = _load_lines(c, batch, pr["rows"], amap)
+    balances = [{"account": amap[ps.source_account], "closing": ps.closing,
+                 "as_of": ps.as_of.isoformat() if ps.as_of else None, "ties_internally": ps.ties()}
+                for ps in parsed if ps.source_account in amap]
     c.execute("UPDATE import_batch SET rows_loaded=%s WHERE id=%s", (loaded, batch))
     return {"batch": batch, "status": status, "format": fmt, "accounts_parsed": len(parsed),
             "lines_loaded": loaded, "unmapped_source_accounts": unmapped,
-            "statement_balances": balances, **_control_summary(_record_controls(c, batch, results))}
+            "statement_balances": balances, "prep": _record_prep(c, batch, pr),
+            **_control_summary(_record_controls(c, batch, results))}
 
 
 def ingest_csv_with_profile(c, name: str, profile_name: str, created_by: str,
                             import_dir: str | None = None, expected_rows: int | None = None,
-                            control_total: float | None = None) -> dict:
+                            control_total: float | None = None, prep_name: str | None = None) -> dict:
     """Ingest a CSV statement export through a saved mapping profile (#37 csvmap).
     Only the 'statement' target lands here (statement_line rows); other targets are
     consumed by their adapters at reconcile time.
 
     CSV carries no bank-supplied integrity evidence, so the #41 controls are: duplicate file,
     rows that failed to parse (a partial file quarantines rather than loading silently), and
-    optional operator-declared expected row count / control total."""
+    optional operator-declared expected row count / control total — all judged on the file as
+    exported, before the #42 prep rule set (prep_name, else the profile's default `prep`) runs."""
     from adapters.formats import controls, csvmap
     row = c.execute("SELECT target, config FROM mapping_profile WHERE name=%s AND active",
                     (profile_name,)).fetchone()
@@ -270,6 +354,8 @@ def ingest_csv_with_profile(c, name: str, profile_name: str, created_by: str,
     if row["target"] != "statement":
         raise ValueError(f"profile '{profile_name}' targets '{row['target']}', not statement")
     profile = csvmap.MappingProfile.from_dict(row["config"])
+    prep_name = prep_name or profile.prep
+    ruleset = load_ruleset(c, prep_name) if prep_name else None
     content = _read_import(name, import_dir)
     sha = controls.sha256(content)
     note = f"csv statement ingest via profile '{profile_name}' (#37)"
@@ -281,29 +367,76 @@ def ingest_csv_with_profile(c, name: str, profile_name: str, created_by: str,
     parsed = csvmap.parse_csv(content, profile)
 
     results = controls.csv_controls(parsed, expected_rows, control_total)
+    pr = run_prep(_csv_rows(parsed), ruleset)
+    if ruleset:
+        results.append(_prep_result(pr))
     amap = {r["source_account"]: r["id"] for r in
             c.execute("SELECT id, source_account FROM gl_account WHERE source_account IS NOT NULL").fetchall()}
-    sources = {r["source_account"] for r in parsed["rows"]}
+    sources = {r["source_account"] for r in pr["rows"]}
     unmapped = sorted(a for a in sources if a not in amap)
     results.append(_unmapped_result(unmapped, len(sources)))
     status = controls.outcome(results)
 
     batch = _open_batch(c, name, created_by, note, sha, status)
-    loaded = 0
-    for r in parsed["rows"]:
-        gl_id = amap.get(r["source_account"])
-        if not gl_id:
-            continue
-        c.execute("""INSERT INTO statement_line
-                       (gl_account_id, stmt_date, amount, description, bank_ref, import_batch_id)
-                     VALUES (%s,%s,%s,%s,%s,%s)""",
-                  (gl_id, r["stmt_date"], r["amount"], r.get("description") or "",
-                   r.get("bank_ref") or None, batch))
-        loaded += 1
+    loaded = _load_lines(c, batch, pr["rows"], amap)
     c.execute("UPDATE import_batch SET rows_loaded=%s WHERE id=%s", (loaded, batch))
     return {"batch": batch, "status": status, "profile": profile_name, "lines_loaded": loaded,
             "row_errors": parsed["errors"][:25], "unmapped_source_accounts": unmapped,
+            "prep": _record_prep(c, batch, pr),
             **_control_summary(_record_controls(c, batch, results))}
+
+
+def preview_prep(c, name: str, profile_name: str | None = None, prep_name: str | None = None,
+                 rules: list | None = None, import_dir: str | None = None, limit: int = 50) -> dict:
+    """Dry run: parse a file and show what a rule set would do to it — before/after per row, the
+    trace, drops and errors. Writes nothing. Inline `rules` (unsaved) take precedence over a saved
+    rule set, so a rule can be tried before anyone saves it."""
+    from adapters import formats
+    from adapters.formats import csvmap, prep
+    if rules is not None:
+        errs = prep.validate(rules)
+        if errs:
+            raise ValueError("; ".join(errs))
+        ruleset = {"name": "(unsaved)", "rules": rules, "fingerprint": prep.fingerprint(rules)}
+    elif prep_name:
+        ruleset = load_ruleset(c, prep_name)
+    else:
+        raise ValueError("give a saved rule set (prep=) or inline rules")
+    content = _read_import(name, import_dir)
+    if profile_name:
+        row = c.execute("SELECT config FROM mapping_profile WHERE name=%s AND active", (profile_name,)).fetchone()
+        if not row:
+            raise LookupError(f"no active mapping profile '{profile_name}'")
+        parsed = csvmap.parse_csv(content, csvmap.MappingProfile.from_dict(row["config"]))
+        rows = _csv_rows(parsed)
+    else:
+        rows = _bank_rows(list(formats.parse(content)))
+    pr = run_prep(rows, ruleset)
+    sample = [{k: prep.jsonable(v) for k, v in r.items()} for r in pr["rows"][:limit]]
+    return {"source": name, "ruleset": ruleset["name"], "fingerprint": ruleset["fingerprint"],
+            "rows_in": len(rows), "rows_out": len(pr["rows"]), "changed": sum(1 for r in pr["rows"] if r["_trace"]),
+            "dropped": pr["dropped"][:limit], "errors": pr["errors"][:limit], "stats": pr["stats"],
+            "sample": sample}
+
+
+def explain_line(c, line_id: int) -> Optional[dict]:
+    """Why a statement line looks the way it does: the rules that changed it, from the snapshot of
+    the rule set version its batch ran (not today's edited rules)."""
+    line = c.execute("""SELECT s.id, s.gl_account_id, s.stmt_date, s.amount, s.description, s.bank_ref,
+                               s.import_batch_id, s.prep_trace, b.status AS batch_status, b.source,
+                               b.prep_summary
+                        FROM statement_line s LEFT JOIN import_batch b ON b.id = s.import_batch_id
+                        WHERE s.id=%s""", (line_id,)).fetchone()
+    if not line:
+        return None
+    summary = line.pop("prep_summary") or {}
+    rules = summary.get("rules") or []
+    steps = []
+    for t in line.pop("prep_trace") or []:
+        rule = rules[t["rule"] - 1] if 0 < t["rule"] <= len(rules) else None
+        steps.append({**t, "definition": rule})
+    return {"line": line, "ruleset": summary.get("ruleset"), "fingerprint": summary.get("fingerprint"),
+            "steps": steps}
 
 
 def batch_controls(c, batch_id: str) -> Optional[dict]:

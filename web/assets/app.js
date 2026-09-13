@@ -614,7 +614,12 @@ RECON.matching = {
       warnings:[{control:"balance.continuity", scope:"account ••8810", detail:"detail does not explain the balance change (residual 1,250.00)"}]}]},
   // Amex: the statement has a fee the GL has not booked yet — a bank-side open item explains it all.
   "2020": {exact:17, rule:0, suggestions:[],
-    open:[{side:"stmt", date:"2026-05-27", ref:"FEE-ANNUAL", desc:"Annual card fee — not yet booked in GL", amt:-2500.00, age:"0-30"}]},
+    // #42 prep rules: the statement export has no reference column — a rule built this one from
+    // the memo text, and the line says so (the trace comes from the rule-set version that ran).
+    open:[{side:"stmt", date:"2026-05-27", ref:"FEE-ANNUAL", desc:"Annual card fee — not yet booked in GL", amt:-2500.00, age:"0-30",
+      prep:{ruleset:"amex-card-export", steps:[
+        {rule:3, op:"extract", label:"fee code from memo", field:"bank_ref", before:"", after:"ANNUAL"},
+        {rule:4, op:"concat", label:"GL fee refs are FEE-xxxx", field:"bank_ref", before:"ANNUAL", after:"FEE-ANNUAL"}]}}]},
   // intercompany UK: only $8,000 of the $11,500 variance is explained — the badge goes amber.
   "2710": {exact:9, rule:1, suggestions:[],
     open:[{side:"gl", date:"2026-05-29", ref:"WIRE-IC-88", desc:"IC wire in transit to UK", amt:8000.00, age:"0-30"}]}
@@ -658,6 +663,9 @@ function _matchCss(){
   .mtcbtn{font:inherit;font-size:12.5px;font-weight:700;border-radius:9px;padding:7px 13px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--text)}
   .mtcbtn.pri{border:none;color:#fff;background:var(--green)}
   .mtcnote{font-size:12.5px;color:var(--muted);margin-top:12px}
+  .mtcprep{font:inherit;font-size:10.5px;font-weight:700;border-radius:20px;padding:2px 8px;border:1px solid #CFD6EA;background:#F3F5FB;color:#43506E;cursor:pointer}
+  .mtcexp{margin:4px 0 0 56px;padding:8px 12px;border-left:3px solid #CFD6EA;font-size:12px;color:var(--muted)}
+  .mtcexp div{margin-top:3px} .mtcexp code{font-size:11px;background:#F3F5FB;border-radius:5px;padding:1px 5px;color:#43506E}
   .mtcq{margin-top:14px;border:1px solid #E8B4AE;border-radius:12px;background:#FDF3F2;padding:12px 14px}
   .mtcq .qh{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:700;color:#A23B34;flex-wrap:wrap}
   .mtcq .qs{font-size:12.5px;color:#6B3A36;margin-top:4px}
@@ -704,12 +712,18 @@ function renderMatching(hostId, acct){
   const badge = (acct.variance===null) ? '' : t.ties
     ? `<div class="mtcbadge g">✓ Variance ${money(acct.variance)} fully explained by open items<span style="flex:1"></span><span class="amt">residual $0.00</span></div>`
     : `<div class="mtcbadge a">⚠ ${money(Math.abs(t.residual))} of the ${money(acct.variance)} variance is unexplained<span style="flex:1"></span><span class="amt">explained ${money(t.explained)}</span></div>`;
+  const q_ = v => v === '' || v === null || v === undefined ? '(empty)' : `“${v}”`;
+  const prepHtml = o => !o.prep ? '' : `<div class="mtcexp" id="exp-${o.ref}" hidden>
+      Prepared by rule set <b>${o.prep.ruleset}</b> — the version that ran on this file:
+      ${o.prep.steps.map(t => `<div>rule ${t.rule} <code>${t.op}</code> ${t.label}: ${t.field} ${q_(t.before)} → ${q_(t.after)}</div>`).join('')}
+    </div>`;
   const rowHtml = o => `<div class="mtcrow">
       <span class="sd ${o.side==='gl'?'gl':'bk'}">${o.side==='gl'?'GL':'BANK'}</span>
       <span class="dt">${o.date}</span>
       <span class="ds">${o.desc}<span>${o.ref}</span></span>
+      ${o.prep ? `<button class="mtcprep" title="Which prep rules shaped this line" onclick="const e=document.getElementById('exp-${o.ref}'); e.hidden=!e.hidden">⚙ ${o.prep.steps.length} rule${o.prep.steps.length>1?'s':''}</button>` : ''}
       <span class="mtcage${o.age==='0-30'?'':' old'}">${o.age}</span>
-      <span class="am">${money(o.amt)}</span></div>`;
+      <span class="am">${money(o.amt)}</span></div>${prepHtml(o)}`;
   const openHtml = m.open.length ? m.open.map(rowHtml).join('')
     : `<p class="mtcnote">No open items — every ledger and statement line for this period is matched.</p>`;
   const sugHtml = m.suggestions.map(s => `<div class="mtcsug" id="sug-${s.id}">
